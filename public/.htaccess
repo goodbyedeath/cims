@@ -1,0 +1,124 @@
+<IfModule mod_rewrite.c>
+    <IfModule mod_negotiation.c>
+        Options -MultiViews -Indexes
+    </IfModule>
+
+    RewriteEngine On
+
+    # Handle Authorization Header
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Handle X-XSRF-Token Header
+    RewriteCond %{HTTP:x-xsrf-token} .
+    RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-Token}]
+
+    # Redirect Trailing Slashes If Not A Folder...
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} (.+)/$
+    RewriteRule ^ %1 [L,R=301]
+
+    # Force HTTPS
+    RewriteCond %{HTTPS} off
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+    # Send Requests To Front Controller...
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [L]
+</IfModule>
+
+# ── Block sensitive files ─────────────────────────────────────────────────────
+<FilesMatch "(\.env|composer\.(json|lock)|package(-lock)?\.json|webpack\.mix\.js|artisan)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# ── Block directory traversal & common exploit patterns ───────────────────────
+<IfModule mod_rewrite.c>
+    RewriteCond %{QUERY_STRING} (\.\.\/|\.\.\\) [NC]
+    RewriteRule .* - [F,L]
+    RewriteCond %{QUERY_STRING} (<|%3C).*script.*(>|%3E) [NC]
+    RewriteRule .* - [F,L]
+</IfModule>
+
+# ── Service Worker scope override ─────────────────────────────────────────────
+<IfModule mod_headers.c>
+    <FilesMatch "^sw\.js$">
+        Header set Service-Worker-Allowed "/"
+        Header set Cache-Control "no-cache, no-store, must-revalidate"
+    </FilesMatch>
+</IfModule>
+
+# ── Compression ───────────────────────────────────────────────────────────────
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css
+    AddOutputFilterByType DEFLATE application/javascript application/x-javascript
+    AddOutputFilterByType DEFLATE application/json application/xml
+    AddOutputFilterByType DEFLATE application/xhtml+xml application/rss+xml
+    AddOutputFilterByType DEFLATE font/ttf font/otf font/opentype
+    AddOutputFilterByType DEFLATE image/svg+xml
+    BrowserMatch ^Mozilla/4 gzip-only-text/html
+    BrowserMatch ^Mozilla/4\.0[678] no-gzip
+    BrowserMatch \bMSIE !no-gzip !gzip-only-text/html
+</IfModule>
+
+# ── Long-term caching for Vite-hashed assets ──────────────────────────────────
+<IfModule mod_expires.c>
+    ExpiresActive On
+    <FilesMatch "^.+-[A-Za-z0-9_-]{8}\.(js|css)$">
+        ExpiresDefault "access plus 1 year"
+    </FilesMatch>
+    <FilesMatch "\.(ico|gif|jpe?g|png|svg|webp|woff2?|ttf|otf|eot)$">
+        ExpiresDefault "access plus 6 months"
+    </FilesMatch>
+</IfModule>
+
+# ── Response headers ──────────────────────────────────────────────────────────
+<IfModule mod_headers.c>
+    # Immutable flag for hashed JS/CSS
+    <FilesMatch "^.+-[A-Za-z0-9_-]{8}\.(js|css)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+
+    # Images & fonts
+    <FilesMatch "\.(ico|gif|jpe?g|png|svg|webp|woff2?|ttf|otf|eot)$">
+        Header set Cache-Control "public, max-age=15552000"
+    </FilesMatch>
+
+    # HTML — always revalidate
+    <FilesMatch "\.html$">
+        Header set Cache-Control "no-cache, must-revalidate"
+    </FilesMatch>
+
+    # ── Security headers ──────────────────────────────────────────────────────
+
+    # HSTS — tell browsers to only use HTTPS for 1 year (includeSubDomains)
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" "expr=%{HTTPS} == 'on'"
+
+    # Prevent MIME-type sniffing
+    Header always set X-Content-Type-Options "nosniff"
+
+    # Clickjacking — deny all framing
+    Header always set X-Frame-Options "DENY"
+
+    # Referrer: only send origin on same-site, full URL on cross-site same-protocol
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Disable legacy XSS auditor (causes issues; CSP is the modern replacement)
+    Header always set X-XSS-Protection "0"
+
+    # Content Security Policy
+    # script-src: 'unsafe-inline' required for SW registration script in app.blade.php
+    # style-src: 'unsafe-inline' required for <style> tags injected by React components
+    # font-src: fonts.bunny.net loaded by app.blade.php
+    # img-src https: covers uploaded images served via /storage (same-origin) and any logo URLs
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.bunny.net; font-src 'self' data: https://fonts.bunny.net; img-src 'self' data: blob: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; manifest-src 'self'"
+
+    # Permissions Policy — disable unused browser features
+    Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+
+    # Hide server identity
+    Header always unset X-Powered-By
+    Header always unset Server
+</IfModule>
