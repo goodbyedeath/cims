@@ -120,13 +120,23 @@ function BrandRow({ brand, onLogoSaved, onLogoRemoved }) {
     );
 }
 
-const blankForm = { brand: '', category: '', product_name: '', description: '', best_price: '', moq: 1, status: 'active', stock_status: 'ready', sort_order: 0 };
+const blankForm = { brand: '', category: '', product_name: '', description: '', selling_points: '', application_scenario: '', best_price: '', special_discount_pct: '', moq: 1, status: 'active', stock_status: 'ready', sort_order: 0, is_featured: 0 };
 
 /* ─── Partner PIN modal ──────────────────────────────────────────────────── */
-function PinModal({ currentPin, onClose }) {
+function PinModal({ currentPin, specialDiscountPct, onClose }) {
     const [copied, setCopied] = useState(false);
     const [generating, setGenerating] = useState(false);
     const [clearing, setClearing] = useState(false);
+    const [pct, setPct] = useState(specialDiscountPct ?? 0);
+    const [savingPct, setSavingPct] = useState(false);
+
+    const savePct = () => {
+        setSavingPct(true);
+        router.post('/catalog/special-discount', { pct: Number(pct) || 0 }, {
+            preserveScroll: true,
+            onFinish: () => setSavingPct(false),
+        });
+    };
 
     const handleCopy = () => {
         if (!currentPin) return;
@@ -201,12 +211,39 @@ function PinModal({ currentPin, onClose }) {
                         </Button>
                     )}
                 </div>
+
+                {/* Special price for registered channels */}
+                <div className="pt-4 border-t border-white/5 space-y-2.5">
+                    <p className="text-xs font-medium text-navy-300 uppercase tracking-widest">Harga Spesial — Channel Terdaftar</p>
+                    <p className="text-xs text-navy-400 leading-relaxed">
+                        Diskon (%) dari harga terbaik, tampil sebagai harga coret untuk pengunjung yang
+                        sudah mendaftar / verifikasi sebagai channel di katalog publik. Isi 0 untuk menonaktifkan.
+                    </p>
+                    <div className="flex items-center gap-2">
+                        <div className="relative w-28">
+                            <input
+                                type="number" min="0" max="90" step="0.5"
+                                value={pct}
+                                onChange={(e) => setPct(e.target.value)}
+                                className="w-full pl-3 pr-8 py-2 rounded-lg bg-navy-800/60 border border-white/10 text-white text-sm focus:outline-none focus:ring-2 focus:ring-gold-500/30 focus:border-gold-500/40"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-navy-500">%</span>
+                        </div>
+                        <Button size="sm" onClick={savePct} disabled={savingPct}>
+                            {savingPct ? <span className="w-3.5 h-3.5 border border-navy-950/40 border-t-transparent rounded-full animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                            Simpan
+                        </Button>
+                        <span className={`text-xs ${Number(specialDiscountPct) > 0 ? 'text-emerald-400' : 'text-navy-500'}`}>
+                            {Number(specialDiscountPct) > 0 ? `Aktif: −${specialDiscountPct}%` : 'Nonaktif'}
+                        </span>
+                    </div>
+                </div>
             </div>
         </Modal>
     );
 }
 
-export default function Index({ catalogs, filters, categories, brands: initialBrands, brandsMap: initialBrandsMap, partnerPin: initialPartnerPin, hasGoogleSheet }) {
+export default function Index({ catalogs, filters, categories, brands: initialBrands, brandsMap: initialBrandsMap, partnerPin: initialPartnerPin, specialDiscountPct, hasGoogleSheet }) {
     const { errors } = usePage().props;
 
     const { sort_by, sort_dir } = filters;
@@ -257,11 +294,15 @@ export default function Index({ catalogs, filters, categories, brands: initialBr
             category: item.category || '',
             product_name: item.product_name || '',
             description: item.description || '',
+            selling_points: Array.isArray(item.selling_points) ? item.selling_points.join('\n') : (item.selling_points || ''),
+            application_scenario: item.application_scenario || '',
             best_price: item.best_price ?? '',
+            special_discount_pct: item.special_discount_pct ?? '',
             moq: item.moq ?? 1,
             status: item.status || 'active',
             stock_status: item.stock_status || 'ready',
             sort_order: item.sort_order ?? 0,
+            is_featured: item.is_featured ? 1 : 0,
         });
         setImageFile(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
@@ -446,7 +487,14 @@ export default function Index({ catalogs, filters, categories, brands: initialBr
                                     )}
                                 </Td>
                                 <Td className="max-w-xs"><ExpandableText text={item.description} /></Td>
-                                <Td className="font-semibold text-gold-400">{formatCurrency(item.best_price)}</Td>
+                                <Td className="font-semibold text-gold-400">
+                                    {formatCurrency(item.best_price)}
+                                    {item.special_discount_pct != null && (
+                                        <span className={`block text-[10px] font-bold ${Number(item.special_discount_pct) > 0 ? 'text-emerald-400' : 'text-navy-500'}`}>
+                                            {Number(item.special_discount_pct) > 0 ? `Spesial −${Number(item.special_discount_pct)}%` : 'Tanpa spesial'}
+                                        </span>
+                                    )}
+                                </Td>
                                 <Td className="text-navy-200">{item.moq}</Td>
                                 <Td><Badge className={statusColor(item.status)}>{item.status}</Badge></Td>
                                 <Td>
@@ -506,8 +554,30 @@ export default function Index({ catalogs, filters, categories, brands: initialBr
                         {errors?.description && <p className="text-xs text-red-400 mt-1">{errors.description}</p>}
                     </div>
 
+                    <div>
+                        <label className="block text-sm font-medium text-navy-200 mb-1.5">
+                            Selling Points <span className="text-navy-500 font-normal text-xs">(optional · one per line)</span>
+                        </label>
+                        <textarea value={data.selling_points} onChange={(e) => setField('selling_points', e.target.value)} rows={3}
+                            placeholder={"Efisiensi tinggi 98%\nGaransi 2 tahun\nIP65 rated"}
+                            className="w-full px-4 py-2.5 bg-navy-800/50 border border-white/10 rounded-lg text-white text-sm placeholder-navy-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30 font-mono" />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-navy-200 mb-1.5">
+                            Application Scenario <span className="text-navy-500 font-normal text-xs">(optional)</span>
+                        </label>
+                        <textarea value={data.application_scenario} onChange={(e) => setField('application_scenario', e.target.value)} rows={2}
+                            placeholder="e.g. Cocok untuk industri manufaktur, data center, dan bangunan komersial."
+                            className="w-full px-4 py-2.5 bg-navy-800/50 border border-white/10 rounded-lg text-white text-sm placeholder-navy-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30" />
+                    </div>
+
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                         <Input label="Best Price (Rp)" type="number" step="1" min={0} value={data.best_price} onChange={(e) => setField('best_price', e.target.value)} error={errors?.best_price} placeholder="e.g. 150000" />
+                        <div className="space-y-1.5">
+                            <Input label="Diskon Spesial (%)" type="number" step="0.5" min={0} max={90} value={data.special_discount_pct} onChange={(e) => setField('special_discount_pct', e.target.value)} error={errors?.special_discount_pct} placeholder={`Global: ${specialDiscountPct || 0}%`} />
+                            <p className="text-[10px] text-navy-500 leading-tight">Kosong = ikut diskon global. 0 = tanpa harga spesial.</p>
+                        </div>
                         <Input label="MOQ" type="number" min={1} value={data.moq} onChange={(e) => setField('moq', parseInt(e.target.value, 10) || 1)} error={errors?.moq} />
                         <div className="space-y-1.5">
                             <label className="block text-sm font-medium text-navy-200">Status</label>
@@ -529,6 +599,20 @@ export default function Index({ catalogs, filters, categories, brands: initialBr
                     </div>
 
                     <Input label="Sort Order (lower = first)" type="number" min={0} value={data.sort_order} onChange={(e) => setField('sort_order', parseInt(e.target.value, 10) || 0)} error={errors?.sort_order} />
+
+                    <button
+                        type="button"
+                        onClick={() => setField('is_featured', data.is_featured ? 0 : 1)}
+                        className="flex items-center gap-3 w-full text-left py-1"
+                    >
+                        <span className={`relative w-10 h-6 rounded-full transition-colors shrink-0 ${data.is_featured ? 'bg-gold-500' : 'bg-navy-700'}`}>
+                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${data.is_featured ? 'translate-x-4' : 'translate-x-0'}`} />
+                        </span>
+                        <div>
+                            <span className="text-sm font-medium text-navy-200">Featured — tampil di Hero Section</span>
+                            <p className="text-xs text-navy-500 mt-0.5">Produk ditampilkan menonjol di bagian atas katalog publik</p>
+                        </div>
+                    </button>
 
                     <div>
                         <label className="block text-sm font-medium text-navy-200 mb-1.5">Product Image</label>
@@ -626,7 +710,7 @@ export default function Index({ catalogs, filters, categories, brands: initialBr
             </Modal>
 
             {showPinModal && (
-                <PinModal currentPin={initialPartnerPin} onClose={() => setShowPinModal(false)} />
+                <PinModal currentPin={initialPartnerPin} specialDiscountPct={specialDiscountPct} onClose={() => setShowPinModal(false)} />
             )}
         </AuthenticatedLayout>
     );

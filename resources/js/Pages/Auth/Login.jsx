@@ -75,7 +75,7 @@ export default function Login() {
                     value={data.email}
                     onChange={(e) => setData('email', e.target.value)}
                     error={!isLocked ? errors.email : undefined}
-                    placeholder="admin@cims.com"
+                    placeholder="Email here"
                     autoFocus
                     disabled={isLocked}
                 />
@@ -90,7 +90,7 @@ export default function Login() {
                         value={data.password}
                         onChange={(e) => setData('password', e.target.value)}
                         error={errors.password}
-                        placeholder="Enter password"
+                        placeholder="Password here"
                         disabled={isLocked}
                     />
                     {!isLocked && errors.email && (

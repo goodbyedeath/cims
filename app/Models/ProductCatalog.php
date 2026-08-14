@@ -19,12 +19,16 @@ class ProductCatalog extends Model
         'category',
         'product_name',
         'description',
+        'selling_points',
+        'application_scenario',
         'best_price',
+        'special_discount_pct',
         'moq',
         'image_path',
         'status',
         'stock_status',
         'sort_order',
+        'is_featured',
     ];
 
     protected static function booted(): void
@@ -39,9 +43,11 @@ class ProductCatalog extends Model
     protected function casts(): array
     {
         return [
-            'best_price' => 'integer',
-            'moq' => 'integer',
-            'sort_order' => 'integer',
+            'best_price'    => 'integer',
+            'moq'           => 'integer',
+            'sort_order'    => 'integer',
+            'selling_points' => 'array',
+            'is_featured'   => 'boolean',
         ];
     }
 

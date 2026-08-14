@@ -4,9 +4,21 @@
     <meta charset="utf-8">
     <title>Penawaran {{ $offering->ref_no ?? $offering->offering_no }}</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        /* Do NOT set `margin` via `*` or on `html`: both match DomPDF's page/root
+           frame and silently zero the @page margin (verified — @page is ignored
+           whenever either is present, whatever the rule order). Reset margins on
+           `body` and below only. */
+        * { padding: 0; box-sizing: border-box; }
+        body, div, p, ul, ol, li, table, thead, tbody, tr, th, td,
+        h1, h2, h3, h4, img, span { margin: 0; }
+
+        /* Page margins — applies to EVERY page. (A padded wrapper would only pad
+           page 1's top and the last page's bottom, so continuation pages jam
+           against the paper edge and blocks get clipped at the break.) */
+        @page { margin: 32px 36px; }
 
         body {
+            margin: 0; /* keep 0 — body margin would stack on top of @page */
             font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
             color: #1a2847;
             font-size: 11px;
@@ -15,7 +27,13 @@
         }
 
         .page {
-            padding: 32px 36px;
+            /* Page margins are handled by the body margin above (every page). */
+        }
+
+        /* Don't let these blocks split across a page break — DomPDF would
+           otherwise clip them at the boundary. */
+        .info-box, .totals-box, .notes-box, .important-box, .signature-table {
+            page-break-inside: avoid;
         }
 
         /* ── Header ── */
@@ -147,6 +165,9 @@
         .items-table td.right { text-align: right; color: #1a2847; font-weight: 600; }
         .items-table tr:last-child td { border-bottom: none; }
         .items-table tr:nth-child(even) td { background: #f8f9fc; }
+        /* Repeat the header on each page and never split a row across the break. */
+        .items-table thead { display: table-header-group; }
+        .items-table tbody tr { page-break-inside: avoid; }
         .items-table .product-name { color: #0d1424; font-weight: 700; }
         .items-table .product-spec { color: #8da2d1; font-size: 9px; margin-top: 2px; }
         .items-table .sku { color: #D4AF37; font-family: 'Courier New', monospace; font-size: 9px; }

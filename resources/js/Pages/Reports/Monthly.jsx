@@ -4,10 +4,18 @@ import KpiCard from '@/Components/KpiCard';
 import Badge from '@/Components/ui/Badge';
 import Button from '@/Components/ui/Button';
 import { Table, Thead, Tbody, Tr, Th, Td } from '@/Components/ui/Table';
+import ReportInsights from '@/Components/ReportInsights';
+import { TrendChart, StatusBreakdown } from '@/Components/ReportCharts';
 import { formatCurrency, gradeColor } from '@/Lib/utils';
 import { ShoppingCart, CheckCircle, XCircle, DollarSign, TrendingUp, Download, ArrowLeft } from 'lucide-react';
 import { Link } from '@inertiajs/react';
 import { useState, useEffect } from 'react';
+
+function deltaSubtitle(delta) {
+    if (delta === null || delta === undefined) return 'vs last month';
+    const arrow = delta >= 0 ? '▲' : '▼';
+    return `${arrow} ${Math.abs(delta)}% vs last month`;
+}
 
 export default function Monthly({ report }) {
     const [Chart, setChart] = useState(null);
@@ -45,11 +53,13 @@ export default function Monthly({ report }) {
                 </a>
             </div>
 
+            <ReportInsights type="monthly" month={report.month} year={report.year} />
+
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
-                <KpiCard title="Total Orders" value={report.totalOrders} icon={ShoppingCart} color="blue" index={0} />
+                <KpiCard title="Total Orders" value={report.totalOrders} subtitle={deltaSubtitle(report.deltas?.orders)} icon={ShoppingCart} color="blue" index={0} />
                 <KpiCard title="Delivered" value={report.deliveredOrders} icon={CheckCircle} color="emerald" index={1} />
                 <KpiCard title="Cancelled" value={report.cancelledOrders} icon={XCircle} color="red" index={2} />
-                <KpiCard title="Revenue" value={formatCurrency(report.revenue)} icon={DollarSign} color="gold" index={3} />
+                <KpiCard title="Revenue" value={formatCurrency(report.revenue)} subtitle={deltaSubtitle(report.deltas?.revenue)} icon={DollarSign} color="gold" index={3} />
                 <KpiCard
                     title="Growth"
                     value={report.growth === null ? 'N/A' : `${report.growth >= 0 ? '+' : ''}${report.growth}%`}
@@ -57,6 +67,13 @@ export default function Monthly({ report }) {
                     color={report.growth === null ? 'blue' : report.growth >= 0 ? 'emerald' : 'red'}
                     index={4}
                 />
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
+                <div className="xl:col-span-2">
+                    <TrendChart data={report.trend} title="6-Month Revenue & Order Trend" />
+                </div>
+                <StatusBreakdown data={report.statusBreakdown} title="This Month by Status" />
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">

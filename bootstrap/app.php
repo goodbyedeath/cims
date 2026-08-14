@@ -18,6 +18,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
         ]);
+        // Inbound WhatsApp webhook is called server-to-server by Wablas; it has
+        // no CSRF token and is protected by the shared secret in its path.
+        $middleware->validateCsrfTokens(except: [
+            'wa/webhook/*',
+            'webhooks/whatsapp',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

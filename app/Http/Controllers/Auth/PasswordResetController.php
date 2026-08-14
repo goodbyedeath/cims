@@ -33,26 +33,30 @@ class PasswordResetController extends Controller
                 ->with('lockout_seconds', $seconds)
                 ->withErrors(['email' => "Terlalu banyak permintaan reset. Coba lagi dalam {$seconds} detik."]);
         }
-        $request->validate(['email' => ['required', 'email', 'exists:users,email']]);
+        $request->validate(['email' => ['required', 'email']]);
 
         RateLimiter::hit($throttleKey, 600); // 10-minute window
 
-        $token = Str::random(64);
+        $user = User::where('email', $request->email)->first();
 
-        DB::table('password_reset_tokens')->updateOrInsert(
-            ['email' => $request->email],
-            ['token' => Hash::make($token), 'created_at' => now()],
-        );
+        if ($user) {
+            $token = Str::random(64);
 
-        $resetUrl = url("/reset-password?token={$token}&email={$request->email}");
+            DB::table('password_reset_tokens')->updateOrInsert(
+                ['email' => $request->email],
+                ['token' => Hash::make($token), 'created_at' => now()],
+            );
 
-        Mail::raw(
-            "Klik link berikut untuk reset password CIMS Anda:\n\n{$resetUrl}\n\nLink berlaku 60 menit.",
-            function ($msg) use ($request) {
-                $msg->to($request->email)
-                    ->subject('CIMS - Reset Password');
-            }
-        );
+            $resetUrl = url("/reset-password?token={$token}&email={$request->email}");
+
+            Mail::raw(
+                "Klik link berikut untuk reset password CIMS Anda:\n\n{$resetUrl}\n\nLink berlaku 60 menit.",
+                function ($msg) use ($request) {
+                    $msg->to($request->email)
+                        ->subject('CIMS - Reset Password');
+                }
+            );
+        }
 
         return back()->with('success', 'Link reset password telah dikirim ke email Anda.');
     }

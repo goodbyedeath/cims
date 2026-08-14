@@ -8,10 +8,13 @@ use App\Exports\ProductCatalogExport;
 use App\Imports\ProductCatalogImport;
 use App\Models\CatalogBrand;
 use App\Models\CatalogSetting;
+use App\Models\Inventory;
 use App\Models\ProductCatalog;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -21,6 +24,12 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 class ProductCatalogController extends Controller
 {
     // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    private function parseSellingPoints(string $raw): ?array
+    {
+        $points = array_values(array_filter(array_map('trim', explode("\n", $raw))));
+        return empty($points) ? null : $points;
+    }
 
     private function brandsMap(): array
     {
@@ -84,6 +93,7 @@ class ProductCatalogController extends Controller
             'brands'         => $allBrands,
             'brandsMap'      => $this->brandsMap(),
             'partnerPin'     => CatalogSetting::getValue('partner_pin'),
+            'specialDiscountPct' => (float) CatalogSetting::getValue('special_discount_pct', '0'),
             'hasGoogleSheet' => !empty(config('services.google_sheet.catalog_id')),
         ]);
     }
@@ -91,17 +101,24 @@ class ProductCatalogController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $validated = $request->validate([
-            'brand'        => ['required', 'string', 'max:100'],
-            'category'     => ['required', 'string', 'max:100'],
-            'product_name' => ['required', 'string', 'max:255'],
-            'description'  => ['nullable', 'string'],
-            'best_price'   => ['required', 'numeric', 'min:0'],
-            'moq'          => ['required', 'integer', 'min:1'],
-            'status'       => ['required', 'in:active,inactive'],
-            'stock_status' => ['required', 'in:ready,indent'],
-            'sort_order'   => ['nullable', 'integer', 'min:0'],
-            'image'        => ['nullable', 'image', 'mimes:jpeg,png,jpg,webp', 'max:5120'],
+            'brand'                => ['required', 'string', 'max:100'],
+            'category'             => ['required', 'string', 'max:100'],
+            'product_name'         => ['required', 'string', 'max:255'],
+            'description'          => ['nullable', 'string'],
+            'selling_points'       => ['nullable', 'string'],
+            'application_scenario' => ['nullable', 'string', 'max:2000'],
+            'best_price'           => ['required', 'numeric', 'min:0'],
+            'special_discount_pct' => ['nullable', 'numeric', 'min:0', 'max:90'],
+            'moq'                  => ['required', 'integer', 'min:1'],
+            'status'               => ['required', 'in:active,inactive'],
+            'stock_status'         => ['required', 'in:ready,indent'],
+            'sort_order'           => ['nullable', 'integer', 'min:0'],
+            'is_featured'          => ['nullable', 'in:0,1'],
+            'image'                => ['nullable', 'image', 'mimes:jpeg,png,jpg,webp', 'max:5120'],
         ]);
+
+        $validated['selling_points'] = $this->parseSellingPoints($validated['selling_points'] ?? '');
+        $validated['is_featured']    = (bool) ($validated['is_featured'] ?? false);
 
         if ($request->hasFile('image')) {
             $validated['image_path'] = $request->file('image')->store('catalog', 'public');
@@ -116,17 +133,24 @@ class ProductCatalogController extends Controller
     public function update(Request $request, ProductCatalog $catalog): RedirectResponse
     {
         $validated = $request->validate([
-            'brand'        => ['required', 'string', 'max:100'],
-            'category'     => ['required', 'string', 'max:100'],
-            'product_name' => ['required', 'string', 'max:255'],
-            'description'  => ['nullable', 'string'],
-            'best_price'   => ['required', 'numeric', 'min:0'],
-            'moq'          => ['required', 'integer', 'min:1'],
-            'status'       => ['required', 'in:active,inactive'],
-            'stock_status' => ['required', 'in:ready,indent'],
-            'sort_order'   => ['nullable', 'integer', 'min:0'],
-            'image'        => ['nullable', 'image', 'mimes:jpeg,png,jpg,webp', 'max:5120'],
+            'brand'                => ['required', 'string', 'max:100'],
+            'category'             => ['required', 'string', 'max:100'],
+            'product_name'         => ['required', 'string', 'max:255'],
+            'description'          => ['nullable', 'string'],
+            'selling_points'       => ['nullable', 'string'],
+            'application_scenario' => ['nullable', 'string', 'max:2000'],
+            'best_price'           => ['required', 'numeric', 'min:0'],
+            'special_discount_pct' => ['nullable', 'numeric', 'min:0', 'max:90'],
+            'moq'                  => ['required', 'integer', 'min:1'],
+            'status'               => ['required', 'in:active,inactive'],
+            'stock_status'         => ['required', 'in:ready,indent'],
+            'sort_order'           => ['nullable', 'integer', 'min:0'],
+            'is_featured'          => ['nullable', 'in:0,1'],
+            'image'                => ['nullable', 'image', 'mimes:jpeg,png,jpg,webp', 'max:5120'],
         ]);
+
+        $validated['selling_points'] = $this->parseSellingPoints($validated['selling_points'] ?? '');
+        $validated['is_featured']    = (bool) ($validated['is_featured'] ?? false);
 
         if ($request->hasFile('image')) {
             if ($catalog->image_path && Storage::disk('public')->exists($catalog->image_path)) {
@@ -262,12 +286,30 @@ class ProductCatalogController extends Controller
         return back()->with('success', 'PIN partner dihapus. Harga kini terkunci tanpa akses.');
     }
 
+    /**
+     * Discount (%) subtracted from best_price to form the "special price"
+     * shown to registered channels on the public catalog. 0 disables it.
+     */
+    public function updateSpecialDiscount(Request $request): RedirectResponse
+    {
+        $data = $request->validate(['pct' => ['required', 'numeric', 'min:0', 'max:90']]);
+
+        CatalogSetting::setValue('special_discount_pct', (string) $data['pct']);
+
+        return back()->with('success', $data['pct'] > 0
+            ? "Harga spesial aktif: diskon {$data['pct']}% dari harga terbaik untuk channel terdaftar."
+            : 'Harga spesial dinonaktifkan.');
+    }
+
     // ─── Public view ─────────────────────────────────────────────────────────
 
     public function publicView(Request $request): Response
     {
         $partnerPin    = CatalogSetting::getValue('partner_pin');
         $priceUnlocked = (bool) $request->session()->get('catalog_partner_auth');
+        // Set after channel registration or the returning-channel WA-OTP login.
+        $registered    = (bool) $request->session()->get('catalog_registered_auth');
+        $specialPct    = (float) CatalogSetting::getValue('special_discount_pct', '0');
 
         $products = ProductCatalog::query()
             ->where('status', 'active')
@@ -278,15 +320,27 @@ class ProductCatalogController extends Controller
         $brandLogos = $this->brandsMap();
 
         $mapped = $products->map(fn ($item) => [
-            'brand'        => $item->brand,
-            'category'     => $item->category,
-            'product_name' => $item->product_name,
-            'description'  => $item->description,
-            'best_price'   => $priceUnlocked ? $item->best_price : null,
-            'moq'          => $item->moq,
-            'image_url'    => $item->image_path ? Storage::url($item->image_path) : null,
-            'brand_logo'   => $brandLogos[$item->brand] ?? null,
-            'stock_status' => $item->stock_status,
+            'brand'                => $item->brand,
+            'category'             => $item->category,
+            'product_name'         => $item->product_name,
+            'description'          => $item->description,
+            'selling_points'       => $item->selling_points,
+            'application_scenario' => $item->application_scenario,
+            'best_price'           => ($priceUnlocked || $registered) ? $item->best_price : null,
+            // Registered channels see best_price struck through with this below
+            // it. Per-product pct overrides the global one (NULL = follow global).
+            'special_price'        => (function () use ($item, $registered, $specialPct) {
+                $pct = $item->special_discount_pct ?? $specialPct;
+
+                return ($registered && $pct > 0 && $item->best_price > 0)
+                    ? round($item->best_price * (100 - $pct) / 100)
+                    : null;
+            })(),
+            'moq'                  => $item->moq,
+            'image_url'            => $item->image_path ? Storage::url($item->image_path) : null,
+            'brand_logo'           => $brandLogos[$item->brand] ?? null,
+            'stock_status'         => $item->stock_status,
+            'is_featured'          => $item->is_featured,
         ]);
 
         $categories = $mapped->pluck('category')->unique()->values();
@@ -301,11 +355,15 @@ class ProductCatalogController extends Controller
             ->sortBy('name')
             ->values();
 
+        $featured = $mapped->filter(fn ($p) => $p['is_featured'])->values();
+
         return Inertia::render('Catalog/Public', [
             'products'      => $mapped,
+            'featured'      => $featured,
             'categories'    => $categories,
             'brands'        => $brandsList,
             'priceUnlocked' => $priceUnlocked,
+            'registeredUnlocked' => $registered,
             'partnerPin'    => (bool) $partnerPin,
             'pinError'      => $request->session()->pull('catalog_pin_error'),
             'company'       => [
@@ -318,18 +376,82 @@ class ProductCatalogController extends Controller
         ])->withViewData(['noindex' => true]);
     }
 
+    /**
+     * Inventory results for the public catalog's search box (JSON, debounced
+     * from the frontend). Only safe fields leave the server: product name,
+     * spec snippet, in-stock flag — the price requires the same partner-PIN /
+     * registered-channel unlock as catalog prices, and exact quantities are
+     * never exposed.
+     */
+    public function publicInventorySearch(Request $request): JsonResponse
+    {
+        $data = $request->validate(['q' => ['required', 'string', 'min:2', 'max:100']]);
+        $q = trim($data['q']);
+
+        $unlocked = (bool) $request->session()->get('catalog_partner_auth')
+            || (bool) $request->session()->get('catalog_registered_auth');
+
+        // FULLTEXT boolean-mode first (same index /search uses), LIKE fallback.
+        $terms = preg_split('/\s+/', preg_replace('/[+\-<>()~*"@]+/', ' ', $q) ?? '', -1, PREG_SPLIT_NO_EMPTY);
+        $boolQ = implode(' ', array_map(fn ($t) => '+' . $t . '*', array_slice($terms, 0, 6)));
+
+        $rows = collect();
+
+        if ($boolQ !== '') {
+            try {
+                $rows = Inventory::selectRaw(
+                    'id, product, spesifikasi, qty, m1,
+                     MATCH(product, sku_no, kode_barang, spesifikasi, notes) AGAINST(? IN BOOLEAN MODE) AS score',
+                    [$boolQ]
+                )
+                    ->whereRaw('MATCH(product, sku_no, kode_barang, spesifikasi, notes) AGAINST(? IN BOOLEAN MODE)', [$boolQ])
+                    ->orderByDesc('score')
+                    ->limit(20)
+                    ->get();
+            } catch (\Throwable) {
+                $rows = collect(); // fulltext unavailable — fall through to LIKE
+            }
+        }
+
+        if ($rows->isEmpty()) {
+            $safe = str_replace(['%', '_'], ['\%', '\_'], $q);
+            $rows = Inventory::where('product', 'like', "%{$safe}%")
+                ->orWhere('spesifikasi', 'like', "%{$safe}%")
+                ->orWhere('sku_no', 'like', "%{$safe}%")
+                ->limit(20)
+                ->get();
+        }
+
+        return response()->json([
+            'items' => $rows->map(fn (Inventory $r) => [
+                'name' => (string) $r->product,
+                'spec' => mb_substr(trim((string) ($r->spesifikasi ?? '')), 0, 140),
+                'available' => (int) $r->qty > 0,
+                'price' => ($unlocked && (float) $r->m1 > 0) ? (float) $r->m1 : null,
+            ])->values(),
+        ]);
+    }
+
     public function publicVerify(Request $request): RedirectResponse
     {
         $request->validate(['pin' => ['required', 'string', 'max:10']]);
 
+        $throttleKey = 'pin-verify:' . $request->ip();
+        if (RateLimiter::tooManyAttempts($throttleKey, 5)) {
+            $request->session()->put('catalog_pin_error', 'Terlalu banyak percobaan. Coba lagi dalam 15 menit.');
+            return redirect()->route('catalog.public');
+        }
+
         $correct = CatalogSetting::getValue('partner_pin');
 
         if ($correct && hash_equals((string) $correct, (string) $request->input('pin'))) {
+            RateLimiter::clear($throttleKey);
             $request->session()->regenerate();
             $request->session()->put('catalog_partner_auth', true);
             return redirect()->route('catalog.public');
         }
 
+        RateLimiter::hit($throttleKey, 900); // 15-minute window
         $request->session()->put('catalog_pin_error', 'Kode akses salah. Silakan coba lagi.');
         return redirect()->route('catalog.public');
     }

@@ -69,3 +69,16 @@ export function statusColor(status) {
     };
     return colors[status] || 'bg-gray-500/20 text-gray-300';
 }
+
+// CSRF header for raw fetch() calls. Prefer the XSRF-TOKEN cookie — Laravel
+// refreshes it on every response, so it survives session regeneration (partner
+// PIN login) and session expiry. The <meta name="csrf-token"> tag is only
+// rendered on the first full page load; once the session rotates, that value
+// is stale and every POST using it gets 419 "CSRF token mismatch".
+export function csrfHeaders() {
+    if (typeof document === 'undefined') return {};
+    const cookie = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/);
+    if (cookie) return { 'X-XSRF-TOKEN': decodeURIComponent(cookie[1]) };
+    const meta = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    return meta ? { 'X-CSRF-TOKEN': meta } : {};
+}

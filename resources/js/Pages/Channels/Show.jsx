@@ -88,7 +88,22 @@ export default function Show({ channel }) {
                         )}
                         <div className="flex items-start gap-3 text-sm">
                             <MapPin className="w-4 h-4 text-navy-400 mt-0.5" />
-                            <span className="text-navy-300">{channel.address}, {channel.city}, {channel.province}</span>
+                            <span className="text-navy-300">
+                                {channel.address}, {channel.city}, {channel.province}
+                                {(channel.map_url || (channel.latitude && channel.longitude)) && (
+                                    <>
+                                        {' '}
+                                        <a
+                                            href={channel.map_url || `https://www.google.com/maps?q=${channel.latitude},${channel.longitude}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-gold-400 hover:text-gold-300 underline underline-offset-2"
+                                        >
+                                            Buka di Maps
+                                        </a>
+                                    </>
+                                )}
+                            </span>
                         </div>
                         {channel.assigned_user && (
                             <div className="flex items-center gap-3 text-sm">

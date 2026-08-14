@@ -10,6 +10,7 @@ use App\Models\ProductCatalog;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -23,12 +24,21 @@ class SearchController extends Controller
     public function verifyPin(Request $request): RedirectResponse
     {
         $request->validate(['pin' => ['required', 'string', 'max:10']]);
+
+        $throttleKey = 'pin-verify:' . $request->ip();
+        if (RateLimiter::tooManyAttempts($throttleKey, 5)) {
+            $request->session()->put('catalog_search_pin_error', 'Terlalu banyak percobaan. Coba lagi dalam 15 menit.');
+            return back();
+        }
+
         $correct = CatalogSetting::getValue('partner_pin');
 
         if ($correct && hash_equals((string) $correct, (string) $request->input('pin'))) {
+            RateLimiter::clear($throttleKey);
             $request->session()->regenerate();
             $request->session()->put('catalog_partner_auth', true);
         } else {
+            RateLimiter::hit($throttleKey, 900); // 15-minute window
             $request->session()->put('catalog_search_pin_error', 'Kode akses salah. Silakan coba lagi.');
         }
 

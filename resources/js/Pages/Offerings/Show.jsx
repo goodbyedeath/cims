@@ -76,22 +76,46 @@ export default function Show({ offering }) {
 
     const validUntilStr = offering.valid_until ? formatDate(offering.valid_until) : '—';
 
-    // WA message — penawaran format
-    const waLines = offering.items?.map((item) => {
-        const spec  = item.inventory?.spesifikasi || item.inventory?.product || item.inventory?.kode_barang || '-';
-        const price = formatCurrency(item.price);
-        const line  = `Penawaran untuk ${channelName}\n${spec}\n${item.qty} unit\n${price}\nBerlaku hingga: ${validUntilStr}`;
-        return offering.note ? `${line}\n${offering.note}` : line;
-    }) || [];
-    const waText = waLines.join('\n\n');
+    // Tax rate derived from the stored amounts (same as the PDF does).
+    const taxPct = Number(offering.subtotal) > 0
+        ? Math.round((Number(offering.tax) / Number(offering.subtotal)) * 100)
+        : 0;
+    const hasDiscount = Number(offering.discount) > 0;
 
-    // Spreadsheet — tab-separated rows
+    // WA message — penawaran format: header once, then items, then totals.
+    const waItems = offering.items?.map((item, i) => {
+        const spec = item.inventory?.spesifikasi || item.inventory?.product || item.inventory?.kode_barang || '-';
+        return `${i + 1}. ${spec}\n   ${item.qty} unit x ${formatCurrency(item.price)}\n   Total: ${formatCurrency(item.total)}`;
+    }) || [];
+    const waText = [
+        `*Penawaran untuk ${channelName}*`,
+        `No. Ref: ${noRef}`,
+        '',
+        waItems.join('\n\n'),
+        '',
+        `Subtotal: ${formatCurrency(offering.subtotal)}`,
+        ...(hasDiscount ? [`Diskon: -${formatCurrency(offering.discount)}`] : []),
+        `PPN (${taxPct}%): ${formatCurrency(offering.tax)}`,
+        `*Grand Total: ${formatCurrency(offering.grand_total)}*`,
+        '',
+        `Berlaku hingga: ${validUntilStr}`,
+        ...(offering.note ? ['', offering.note] : []),
+    ].join('\n');
+
+    // Spreadsheet — tab-separated rows, then a totals block under the Total
+    // column. Values stay raw (unformatted) so Excel/Sheets treats them as numbers.
+    const sheetHeader = ['No. Ref', 'Dealer Name', 'Alamat', 'Produk', 'Price', 'QTY', 'Total', 'Valid Until'].join('\t');
     const sheetRows = offering.items?.map((item) => {
         const spec = item.inventory?.spesifikasi || item.inventory?.product || '-';
-        return [noRef, channelName, channelAddress, spec, item.price, item.qty, validUntilStr].join('\t');
+        return [noRef, channelName, channelAddress, spec, item.price, item.qty, item.total, validUntilStr].join('\t');
     }) || [];
-    const sheetHeader = ['No. Ref', 'Dealer Name', 'Alamat', 'Produk', 'Price', 'QTY', 'Valid Until'].join('\t');
-    const sheetText = [sheetHeader, ...sheetRows].join('\n');
+    const sheetSummary = [
+        ['', '', '', '', '', 'Subtotal', offering.subtotal].join('\t'),
+        ...(hasDiscount ? [['', '', '', '', '', 'Diskon', -Number(offering.discount)].join('\t')] : []),
+        ['', '', '', '', '', `PPN (${taxPct}%)`, offering.tax].join('\t'),
+        ['', '', '', '', '', 'Grand Total', offering.grand_total].join('\t'),
+    ];
+    const sheetText = [sheetHeader, ...sheetRows, '', ...sheetSummary].join('\n');
 
     // ──────────────────────────────────────────────────────────────
 

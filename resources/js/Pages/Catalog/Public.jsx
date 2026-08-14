@@ -3,345 +3,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Package, Search, X, LogOut, Tag, ShoppingBag, Layers,
     ChevronRight, Phone, MessageCircle, ArrowLeft, Sparkles,
-    KeyRound, Lock, Sun, Moon,
+    KeyRound, Sun, Moon, UserPlus,
 } from 'lucide-react';
-import { formatCurrency } from '@/Lib/utils';
-
-/* ─── Partner PIN modal ──────────────────────────────────────────────────── */
-function PartnerModal({ onClose, error, isDark }) {
-    const [digits, setDigits] = useState(['', '', '', '']);
-    const [loading, setLoading] = useState(false);
-    const [shake, setShake]   = useState(false);
-    const refs = [useRef(null), useRef(null), useRef(null), useRef(null)];
-
-    const pin = digits.join('');
-    const complete = pin.length === 4;
-
-    useEffect(() => { refs[0].current?.focus(); }, []);
-
-    useEffect(() => {
-        if (error) { setShake(true); setDigits(['', '', '', '']); setTimeout(() => { setShake(false); refs[0].current?.focus(); }, 500); }
-    }, [error]);
-
-    const submit = (value) => {
-        setLoading(true);
-        router.post('/catalog/public/verify', { pin: value }, {
-            onFinish: () => setLoading(false),
-            onSuccess: onClose,
-            preserveScroll: true,
-        });
-    };
-
-    const handleChange = (i, val) => {
-        const digit = val.replace(/\D/g, '').slice(-1);
-        const next = [...digits];
-        next[i] = digit;
-        setDigits(next);
-        if (digit && i < 3) refs[i + 1].current?.focus();
-        if (digit && i === 3) {
-            const full = next.join('');
-            if (full.length === 4) submit(full);
-        }
-    };
-
-    const handleKeyDown = (i, e) => {
-        if (e.key === 'Backspace') {
-            if (digits[i]) {
-                const next = [...digits]; next[i] = ''; setDigits(next);
-            } else if (i > 0) {
-                refs[i - 1].current?.focus();
-            }
-        } else if (e.key === 'ArrowLeft' && i > 0) {
-            refs[i - 1].current?.focus();
-        } else if (e.key === 'ArrowRight' && i < 3) {
-            refs[i + 1].current?.focus();
-        } else if (e.key === 'Enter' && complete) {
-            submit(pin);
-        }
-    };
-
-    const handlePaste = (e) => {
-        e.preventDefault();
-        const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4);
-        if (!pasted) return;
-        const next = ['', '', '', ''];
-        pasted.split('').forEach((d, i) => { next[i] = d; });
-        setDigits(next);
-        const focusIdx = Math.min(pasted.length, 3);
-        refs[focusIdx].current?.focus();
-        if (pasted.length === 4) submit(pasted);
-    };
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ animation: 'fadeIn 0.2s ease' }} onClick={onClose}>
-            <div className="absolute inset-0 bg-black/70 backdrop-blur-md" />
-            <div
-                className={`relative z-10 w-full max-w-xs rounded-3xl shadow-2xl overflow-hidden ${isDark ? 'bg-navy-900 border border-white/10' : 'bg-white border border-gray-200 shadow-xl'}`}
-                style={{ animation: 'slideUp 0.25s cubic-bezier(0.34,1.4,0.64,1)' }}
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className="h-1 w-full bg-gradient-to-r from-gold-600 via-gold-400 to-gold-600" />
-                <div className="p-6">
-                    {/* Header */}
-                    <div className="flex items-start justify-between gap-3 mb-6">
-                        <div className="flex items-center gap-3">
-                            <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${isDark ? 'bg-gold-500/10 border border-gold-500/25' : 'bg-amber-50 border border-amber-200'}`}>
-                                <KeyRound className={`w-5 h-5 ${isDark ? 'text-gold-400' : 'text-amber-600'}`} />
-                            </div>
-                            <div>
-                                <h2 className={`text-base font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Akses Partner</h2>
-                                <p className={`text-xs mt-0.5 ${isDark ? 'text-navy-500' : 'text-gray-400'}`}>Masukkan 4-digit kode akses</p>
-                            </div>
-                        </div>
-                        <button onClick={onClose} className={`w-8 h-8 rounded-full flex items-center justify-center transition shrink-0 ${isDark ? 'text-navy-500 hover:text-white hover:bg-white/8' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'}`}>
-                            <X className="w-4 h-4" />
-                        </button>
-                    </div>
-
-                    {/* Error */}
-                    {error && (
-                        <div className="mb-5 flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-400">
-                            <X className="w-3.5 h-3.5 shrink-0" />{error}
-                        </div>
-                    )}
-
-                    {/* OTP boxes */}
-                    <div className={`flex justify-center gap-3 mb-6 ${shake ? 'animate-[shake_0.45s_ease]' : ''}`}>
-                        {digits.map((d, i) => (
-                            <input
-                                key={i}
-                                ref={refs[i]}
-                                type="text"
-                                inputMode="numeric"
-                                maxLength={1}
-                                value={d}
-                                onChange={(e) => handleChange(i, e.target.value)}
-                                onKeyDown={(e) => handleKeyDown(i, e)}
-                                onPaste={handlePaste}
-                                onFocus={(e) => e.target.select()}
-                                className={`w-14 h-16 rounded-2xl text-center text-2xl font-black border-2 focus:outline-none transition-all duration-150 select-none ${
-                                    d
-                                        ? isDark
-                                            ? 'bg-gold-500/10 border-gold-500 text-gold-400 shadow-lg shadow-gold-500/15'
-                                            : 'bg-amber-50 border-amber-400 text-amber-700 shadow-lg shadow-amber-500/15'
-                                        : isDark
-                                            ? 'bg-navy-800/60 border-white/10 text-white focus:border-gold-500/60 focus:bg-navy-800'
-                                            : 'bg-gray-50 border-gray-200 text-gray-900 focus:border-amber-400 focus:bg-white'
-                                }`}
-                            />
-                        ))}
-                    </div>
-
-                    {/* Submit */}
-                    <button
-                        onClick={() => complete && !loading && submit(pin)}
-                        disabled={!complete || loading}
-                        className="w-full px-4 py-3 rounded-xl bg-gold-500 text-navy-950 text-sm font-bold hover:bg-gold-400 transition disabled:opacity-35 disabled:cursor-not-allowed"
-                    >
-                        {loading ? (
-                            <span className="flex items-center justify-center gap-2">
-                                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
-                                Memverifikasi…
-                            </span>
-                        ) : 'Masuk sebagai Partner'}
-                    </button>
-
-                    <p className={`mt-4 text-center text-[10px] ${isDark ? 'text-navy-700' : 'text-gray-300'}`}>Kode diberikan oleh sales representative Anda.</p>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-/* ─── Product detail modal ───────────────────────────────────────────────── */
-function ProductModal({ product, onClose, priceUnlocked, isDark }) {
-    if (!product) return null;
-    const isReady = product.stock_status === 'ready';
-
-    const [descExpanded, setDescExpanded] = useState(false);
-    const [isClamped, setIsClamped]       = useState(false);
-    const descRef = useRef(null);
-
-    // Re-measure whenever the product changes (reset + check if text overflows 4 lines)
-    useEffect(() => {
-        setDescExpanded(false);
-        setIsClamped(false);
-        const id = setTimeout(() => {
-            if (descRef.current) {
-                setIsClamped(descRef.current.scrollHeight > descRef.current.clientHeight + 1);
-            }
-        }, 50); // after paint
-        return () => clearTimeout(id);
-    }, [product?.id]);
-
-    return (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ animation: 'fadeIn 0.2s ease' }} onClick={onClose}>
-            <div className="absolute inset-0 bg-black/75 backdrop-blur-md" />
-            <div
-                className={`relative z-10 w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90dvh] sm:max-h-[88vh] ${isDark ? 'bg-navy-900 border border-white/8' : 'bg-white border border-gray-200'}`}
-                style={{ animation: 'slideUp 0.25s cubic-bezier(0.34,1.4,0.64,1)' }}
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className={`relative aspect-[16/9] overflow-hidden shrink-0 ${isDark ? 'bg-navy-800' : 'bg-gray-100'}`}>
-                    {product.image_url ? (
-                        <img src={product.image_url} alt={product.product_name} className="w-full h-full object-cover" />
-                    ) : (
-                        <div className={`absolute inset-0 flex items-center justify-center bg-gradient-to-br ${isDark ? 'from-navy-800 to-navy-900' : 'from-gray-100 to-gray-200'}`}>
-                            <Package className={`w-14 h-14 ${isDark ? 'text-navy-600' : 'text-gray-300'}`} />
-                        </div>
-                    )}
-                    <div className={`absolute inset-0 bg-gradient-to-t ${isDark ? 'from-navy-900 via-navy-900/30 to-transparent' : 'from-black/50 via-black/10 to-transparent'}`} />
-                    <button onClick={onClose} className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/50 backdrop-blur-sm text-white hover:bg-black/70 transition flex items-center justify-center">
-                        <X className="w-4 h-4" />
-                    </button>
-                    <div className="absolute bottom-3 left-4 flex gap-2 items-center flex-wrap">
-                        <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gold-500 text-navy-950 shadow-lg shadow-gold-500/30">
-                            {product.brand_logo && <img src={product.brand_logo} alt={product.brand} className="w-3.5 h-3.5 object-contain" />}
-                            {product.brand}
-                        </span>
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-medium bg-white/10 backdrop-blur-sm text-white border border-white/15">{product.category}</span>
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${isReady ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'}`}>
-                            {isReady ? '● Ready Stock' : '○ Inden'}
-                        </span>
-                    </div>
-                </div>
-                <div className="p-5 sm:p-6 overflow-y-auto flex-1">
-                    <h2 className={`text-xl font-bold leading-snug ${isDark ? 'text-white' : 'text-gray-900'}`}>{product.product_name}</h2>
-                    {product.description && (
-                        <div className="mt-2.5">
-                            <p
-                                ref={descRef}
-                                className={`text-sm leading-relaxed whitespace-pre-line transition-all duration-300 ${!descExpanded ? 'line-clamp-4' : ''} ${isDark ? 'text-navy-300' : 'text-gray-600'}`}
-                            >
-                                {product.description}
-                            </p>
-                            {(isClamped || descExpanded) && (
-                                <button
-                                    onClick={() => setDescExpanded(v => !v)}
-                                    className={`mt-1.5 text-xs font-semibold flex items-center gap-1 transition-colors ${isDark ? 'text-gold-400 hover:text-gold-300' : 'text-amber-600 hover:text-amber-500'}`}
-                                >
-                                    {descExpanded ? (
-                                        <><span>Sembunyikan</span><svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m18 15-6-6-6 6"/></svg></>
-                                    ) : (
-                                        <><span>Lihat selengkapnya</span><svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m6 9 6 6 6-6"/></svg></>
-                                    )}
-                                </button>
-                            )}
-                        </div>
-                    )}
-                    <div className="mt-5 grid grid-cols-2 gap-3">
-                        <div className={`rounded-2xl p-4 border ${isDark ? 'bg-navy-800/60 border-white/6' : 'bg-slate-50 border-gray-200'}`}>
-                            <p className={`text-[10px] uppercase tracking-widest mb-1.5 ${isDark ? 'text-navy-500' : 'text-gray-400'}`}>Harga Terbaik</p>
-                            {priceUnlocked && product.best_price !== null ? (
-                                <p className={`text-xl font-black leading-none ${isDark ? 'text-gold-400' : 'text-amber-600'}`}>{formatCurrency(product.best_price)}</p>
-                            ) : (
-                                <div className={`flex items-center gap-1.5 ${isDark ? 'text-navy-600' : 'text-gray-400'}`}>
-                                    <Lock className="w-4 h-4" />
-                                    <p className="text-xs font-medium">Partner Only</p>
-                                </div>
-                            )}
-                        </div>
-                        <div className={`rounded-2xl p-4 border ${isDark ? 'bg-navy-800/60 border-white/6' : 'bg-slate-50 border-gray-200'}`}>
-                            <p className={`text-[10px] uppercase tracking-widest mb-1 ${isDark ? 'text-navy-500' : 'text-gray-400'}`}>Min. Pesanan</p>
-                            <p className={`text-xl font-black leading-none ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                                {product.moq} <span className={`text-sm font-normal ${isDark ? 'text-navy-400' : 'text-gray-500'}`}>pcs</span>
-                            </p>
-                        </div>
-                    </div>
-                    <p className={`mt-4 text-center text-xs ${isDark ? 'text-navy-600' : 'text-gray-400'}`}>Hubungi sales representative Anda untuk melakukan pemesanan.</p>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-/* ─── Brand card ─────────────────────────────────────────────────────────── */
-function BrandCard({ brand, index, onClick, isDark }) {
-    const initials = brand.name.substring(0, 2).toUpperCase();
-    return (
-        <button
-            onClick={() => onClick(brand.name)}
-            className={`group relative flex flex-col rounded-2xl sm:rounded-3xl overflow-hidden transition-all duration-300 hover:-translate-y-0.5 ${isDark ? 'bg-navy-900/60 border border-white/6 hover:border-gold-500/60 hover:shadow-2xl hover:shadow-gold-500/10' : 'bg-white border border-gray-200 hover:border-amber-300 hover:shadow-xl hover:shadow-amber-500/10'}`}
-            style={{ animation: 'cardIn 0.4s ease both', animationDelay: `${Math.min(index * 70, 560)}ms` }}
-        >
-            <div className={`relative w-full aspect-square overflow-hidden flex items-center justify-center p-5 bg-gradient-to-br ${isDark ? 'from-navy-800/80 to-navy-900' : 'from-gray-50 to-white'}`}>
-                <div className={`w-full h-full rounded-xl sm:rounded-2xl flex items-center justify-center p-4 transition-colors duration-300 ${isDark ? 'bg-white/4 border border-white/6 group-hover:bg-white/7' : 'bg-white border border-gray-100 group-hover:bg-gray-50 shadow-sm'}`}>
-                    {brand.logo ? (
-                        <img src={brand.logo} alt={brand.name} loading="lazy" className="w-full h-full object-contain transition-transform duration-400 group-hover:scale-110 drop-shadow-lg" />
-                    ) : (
-                        <span className={`text-3xl sm:text-4xl font-black bg-clip-text text-transparent select-none ${isDark ? 'bg-gradient-to-br from-navy-500 to-navy-700' : 'bg-gradient-to-br from-gray-300 to-gray-500'}`}>{initials}</span>
-                    )}
-                </div>
-                <div className="absolute inset-0 bg-gradient-to-t from-gold-500/10 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
-            </div>
-            <div className={`px-3 py-3 sm:px-4 sm:py-3.5 border-t transition-colors duration-300 ${isDark ? 'bg-gradient-to-b from-navy-900/0 to-navy-900/80 border-white/5 group-hover:border-gold-500/20' : 'bg-white border-gray-100 group-hover:border-amber-200'}`}>
-                <p className={`text-sm font-bold text-center truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>{brand.name}</p>
-                <p className={`text-[10px] text-center mt-0.5 transition-colors ${isDark ? 'text-navy-500 group-hover:text-navy-400' : 'text-gray-400'}`}>{brand.count} produk</p>
-            </div>
-            <div className={`absolute top-2.5 right-2.5 w-6 h-6 rounded-full backdrop-blur-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300 scale-75 group-hover:scale-100 ${isDark ? 'bg-navy-950/80' : 'bg-white shadow-sm'}`}>
-                <ChevronRight className={`w-3 h-3 ${isDark ? 'text-gold-400' : 'text-amber-500'}`} />
-            </div>
-        </button>
-    );
-}
-
-/* ─── Product card ───────────────────────────────────────────────────────── */
-function ProductCard({ product, index, onClick, priceUnlocked, isDark }) {
-    const isReady = product.stock_status === 'ready';
-    return (
-        <button
-            onClick={() => onClick(product)}
-            className={`group text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-0.5 flex flex-col ${isDark ? 'bg-navy-900/60 border border-white/6 hover:border-gold-500/50 hover:shadow-xl hover:shadow-gold-500/8' : 'bg-white border border-gray-200 hover:border-amber-300 hover:shadow-xl hover:shadow-amber-500/10'}`}
-            style={{ animation: 'cardIn 0.35s ease both', animationDelay: `${Math.min(index * 45, 450)}ms` }}
-        >
-            <div className={`relative aspect-[4/3] overflow-hidden shrink-0 bg-gradient-to-br ${isDark ? 'from-navy-800 to-navy-900' : 'from-gray-100 to-gray-200'}`}>
-                {product.image_url ? (
-                    <img src={product.image_url} alt={product.product_name} loading="lazy" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
-                ) : (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                        <Package className={`w-10 h-10 ${isDark ? 'text-navy-700' : 'text-gray-300'}`} />
-                    </div>
-                )}
-                <div className={`absolute inset-0 bg-gradient-to-t ${isDark ? 'from-navy-950/70 via-transparent to-transparent' : 'from-black/20 via-transparent to-transparent'}`} />
-                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-250">
-                    <span className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gold-500 text-navy-950 text-[11px] font-bold uppercase tracking-wide shadow-xl shadow-gold-500/40 translate-y-1 group-hover:translate-y-0 transition-transform duration-250">
-                        Lihat Detail <ChevronRight className="w-3.5 h-3.5" />
-                    </span>
-                </div>
-                <span className={`absolute top-2 right-2 text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full backdrop-blur-sm ${isReady ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/25' : 'bg-amber-500/20 text-amber-300 border border-amber-500/25'}`}>
-                    {isReady ? 'Ready' : 'Inden'}
-                </span>
-            </div>
-            <div className="p-3 sm:p-4 flex-1 flex flex-col gap-1.5">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className={`flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider ${isDark ? 'text-gold-400' : 'text-amber-600'}`}>
-                        {product.brand_logo && <img src={product.brand_logo} alt={product.brand} className="w-3 h-3 object-contain" />}
-                        {product.brand}
-                    </span>
-                    <span className={isDark ? 'text-navy-700' : 'text-gray-300'}>·</span>
-                    <span className={`text-[9px] uppercase tracking-widest font-semibold ${isDark ? 'text-navy-500' : 'text-gray-400'}`}>{product.category}</span>
-                </div>
-                <h3 className={`text-sm font-semibold leading-snug flex-1 ${isDark ? 'text-white' : 'text-gray-900'}`} style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                    {product.product_name}
-                </h3>
-                <div className={`flex items-end justify-between gap-1 pt-1.5 border-t mt-auto ${isDark ? 'border-white/5' : 'border-gray-100'}`}>
-                    {priceUnlocked && product.best_price !== null ? (
-                        <p className={`text-base font-black leading-none ${isDark ? 'text-gold-400' : 'text-amber-600'}`}>{formatCurrency(product.best_price)}</p>
-                    ) : (
-                        <div className={`flex items-center gap-1 ${isDark ? 'text-navy-600' : 'text-gray-400'}`}>
-                            <Lock className="w-3 h-3" />
-                            <span className="text-[10px] font-medium">Harga Partner</span>
-                        </div>
-                    )}
-                    <p className={`text-[10px] ${isDark ? 'text-navy-500' : 'text-gray-400'}`}>min {product.moq} pcs</p>
-                </div>
-            </div>
-        </button>
-    );
-}
+import PartnerModal from '@/Components/catalog/PartnerModal';
+import RegisterModal from '@/Components/catalog/RegisterModal';
+import ProductModal from '@/Components/catalog/ProductModal';
+import InventoryResults from '@/Components/catalog/InventoryResults';
+import { BrandCard, ProductCard, HeroProductCard } from '@/Components/catalog/cards';
 
 /* ─── Main page ──────────────────────────────────────────────────────────── */
-export default function Public({ products, categories, brands, priceUnlocked, partnerPin, pinError, company }) {
+export default function Public({ products, categories, brands, priceUnlocked, registeredUnlocked, partnerPin, pinError, company, featured }) {
+    // Prices are visible for partner-PIN sessions AND registered channels;
+    // registered channels additionally get special_price on each product.
+    const anyUnlocked = priceUnlocked || registeredUnlocked;
     const companyName    = company?.name     || 'Component Sales';
     const companyTagline = company?.tagline  || 'Sistem Integrator';
     const companyLogoUrl = company?.logo_url || null;
@@ -351,16 +25,10 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
     const [activeCategory, setActiveCategory]   = useState('all');
     const [selectedProduct, setSelectedProduct] = useState(null);
     const [showPinModal, setShowPinModal]       = useState(!!pinError);
-    const [heroSearch, setHeroSearch]           = useState('');
+    const [regModal, setRegModal]               = useState(null); // null | 'register' | 'login'
     const [theme, setTheme] = useState(() =>
         (typeof window !== 'undefined' && localStorage.getItem('catalog-theme')) || 'dark'
     );
-
-    const handleHeroSearch = (e) => {
-        e.preventDefault();
-        const q = heroSearch.trim();
-        if (q) window.location.href = '/search?q=' + encodeURIComponent(q);
-    };
 
     useEffect(() => { if (priceUnlocked) setShowPinModal(false); }, [priceUnlocked]);
 
@@ -371,9 +39,17 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
         if (typeof window !== 'undefined') localStorage.setItem('catalog-theme', next);
     };
 
+    const searchInputRef = useRef(null);
+
     const handleBrandClick = (brandName) => { setActiveBrand(brandName); setActiveCategory('all'); setSearchTerm(''); setView('products'); };
     const handleBrowseAll  = () => { setActiveBrand(null); setActiveCategory('all'); setSearchTerm(''); setView('products'); };
     const handleBack       = () => { setView('brands'); setActiveBrand(null); setSearchTerm(''); setActiveCategory('all'); };
+    // Hero "Cari" jumps straight into the catalog with the search box focused,
+    // instead of navigating away from the page.
+    const handleSearchClick = () => {
+        handleBrowseAll();
+        setTimeout(() => searchInputRef.current?.focus(), 350); // after view transition
+    };
 
     const activeBrandObj = useMemo(() => (brands || []).find((b) => b.name === activeBrand), [brands, activeBrand]);
     const brandBaseProducts = useMemo(
@@ -401,6 +77,36 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
     const totalProducts   = products?.length || 0;
     const totalCategories = categories?.length || 0;
     const totalBrands     = brands?.length || 0;
+
+    // ── Inventory search (server-side, debounced) ─────────────────────────
+    // The catalog grid filters client-side; the same search box also queries
+    // the inventory DB so items not in the catalog are still findable.
+    const [invResults, setInvResults] = useState(null); // null = idle
+    const [invLoading, setInvLoading] = useState(false);
+    // Search-source filter (only meaningful while a search term is active):
+    // 'all' | 'catalog' | 'inventory'.
+    const [searchSource, setSearchSource] = useState('all');
+    const searching = searchTerm.trim().length >= 2;
+    const source = searching ? searchSource : 'all';
+
+    useEffect(() => {
+        const term = searchTerm.trim();
+        if (view !== 'products' || term.length < 2) { setInvResults(null); return undefined; }
+        const t = setTimeout(async () => {
+            setInvLoading(true);
+            try {
+                const res = await fetch(`/catalog/public/inventory-search?q=${encodeURIComponent(term)}`, {
+                    headers: { Accept: 'application/json' },
+                });
+                const json = await res.json().catch(() => ({}));
+                setInvResults(res.ok ? (json.items || []) : []);
+            } catch {
+                setInvResults([]);
+            }
+            setInvLoading(false);
+        }, 400);
+        return () => clearTimeout(t);
+    }, [searchTerm, view]);
 
     return (
         <>
@@ -464,6 +170,16 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
 
                             {/* Right controls */}
                             <div className="shrink-0 flex flex-col items-end gap-2 mt-1">
+                                {/* Search — jumps into the catalog with search focused */}
+                                <button
+                                    onClick={handleSearchClick}
+                                    title="Cari produk di katalog"
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition ${isDark ? 'border-white/10 bg-white/3 text-navy-400 hover:text-white hover:border-white/25 hover:bg-white/6' : 'border-gray-200 bg-white text-gray-500 hover:text-gray-900 hover:border-gray-300 shadow-sm'}`}
+                                >
+                                    <Search className="w-3.5 h-3.5" />
+                                    <span>Cari</span>
+                                </button>
+
                                 {/* Theme toggle */}
                                 <button
                                     onClick={toggleTheme}
@@ -499,63 +215,34 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
                                         <span className="sm:hidden">Partner</span>
                                     </button>
                                 ) : null}
+
+                                {/* Channel self-registration / registered status */}
+                                {registeredUnlocked ? (
+                                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gold-500/10 border border-gold-500/25 text-[10px] font-semibold text-gold-400">
+                                        <Sparkles className="w-3 h-3" />
+                                        Harga Spesial Aktif
+                                    </div>
+                                ) : (
+                                    <>
+                                        <button
+                                            onClick={() => setRegModal('register')}
+                                            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gold-500 text-navy-950 text-xs font-bold hover:bg-gold-400 transition shadow-lg shadow-gold-500/25"
+                                        >
+                                            <UserPlus className="w-3.5 h-3.5" />
+                                            <span className="hidden sm:inline">Daftar Channel</span>
+                                            <span className="sm:hidden">Daftar</span>
+                                        </button>
+                                        <button
+                                            onClick={() => setRegModal('login')}
+                                            className={`text-[10px] font-medium transition ${isDark ? 'text-navy-500 hover:text-gold-400' : 'text-gray-400 hover:text-amber-600'}`}
+                                        >
+                                            Sudah terdaftar? Aktifkan harga spesial
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         </div>
 
-                        {/* ── Welcome greeting + Hybrid search bar ── */}
-                        <div className="mt-8 mb-2">
-                            <div className={`relative rounded-3xl overflow-hidden px-6 py-7 border ${isDark ? 'bg-gradient-to-br from-gold-500/8 via-navy-900/40 to-blue-900/20 border-gold-500/15' : 'bg-gradient-to-br from-amber-50 via-white to-blue-50 border-amber-200/60 shadow-sm'}`}>
-                                {/* subtle glow */}
-                                <div className={`absolute -top-10 -right-10 w-48 h-48 rounded-full blur-3xl pointer-events-none ${isDark ? 'bg-gold-500/10' : 'bg-amber-400/15'}`} />
-
-                                <p className={`text-xs font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-gold-500/60' : 'text-amber-500/80'}`}>Pencarian Produk</p>
-
-                                <h2 className={`text-xl sm:text-2xl font-black leading-tight mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                                    Hallo, selamat datang di{' '}
-                                    <span className="bg-gradient-to-r from-gold-400 to-amber-300 bg-clip-text text-transparent">
-                                        {companyName}
-                                    </span>
-                                </h2>
-                                <p className={`text-sm font-medium mb-5 ${isDark ? 'text-navy-400' : 'text-gray-500'}`}>
-                                    cari produk apa?&nbsp;✨
-                                </p>
-
-                                {/* Search bar */}
-                                <form onSubmit={handleHeroSearch} className="relative max-w-xl">
-                                    <Search className={`absolute left-4 top-1/2 -translate-y-1/2 w-4.5 h-4.5 pointer-events-none ${isDark ? 'text-navy-500' : 'text-gray-400'}`} />
-                                    <input
-                                        type="text"
-                                        value={heroSearch}
-                                        onChange={(e) => setHeroSearch(e.target.value)}
-                                        placeholder="Cari nama produk, merek, kategori…"
-                                        className={`w-full pl-11 pr-32 py-3.5 rounded-2xl text-sm font-medium border focus:outline-none transition-all
-                                            ${isDark
-                                                ? 'bg-navy-800/70 border-white/10 text-white placeholder-navy-600 focus:border-gold-500/40 focus:ring-2 focus:ring-gold-500/15'
-                                                : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 shadow-sm'
-                                            }`}
-                                    />
-                                    <button
-                                        type="submit"
-                                        className={`absolute right-2 top-1/2 -translate-y-1/2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                                            heroSearch.trim()
-                                                ? 'bg-gold-500 text-navy-950 hover:bg-gold-400 shadow-lg shadow-gold-500/25'
-                                                : isDark
-                                                    ? 'bg-white/6 text-navy-500 cursor-default'
-                                                    : 'bg-gray-100 text-gray-400 cursor-default'
-                                        }`}
-                                    >
-                                        Cari
-                                    </button>
-                                </form>
-
-                                <p className={`mt-3 text-[11px] ${isDark ? 'text-navy-600' : 'text-gray-400'}`}>
-                                    Pencarian penuh ·{' '}
-                                    <a href="/search" className={`hover:underline ${isDark ? 'text-gold-500/50 hover:text-gold-400' : 'text-amber-500 hover:text-amber-600'}`}>
-                                        Buka halaman pencarian →
-                                    </a>
-                                </p>
-                            </div>
-                        </div>
 
                         {/* Stats */}
                         <div className="flex items-center gap-3 mt-6 flex-wrap">
@@ -584,6 +271,86 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
                 {/* ── BRAND VIEW ───────────────────────────────────────── */}
                 {view === 'brands' && (
                     <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-10" style={{ animation: 'viewBack 0.3s ease both' }}>
+
+                        {/* How it works — 3 langkah agar alur katalog langsung jelas */}
+                        <div className="grid sm:grid-cols-3 gap-3 mb-12">
+                            {[
+                                {
+                                    icon: ShoppingBag,
+                                    title: 'Jelajahi Produk',
+                                    desc: 'Pilih merek di bawah, atau tekan "Semua Produk" untuk melihat seluruh katalog.',
+                                },
+                                {
+                                    icon: KeyRound,
+                                    title: priceUnlocked ? 'Harga Partner Aktif ✓' : 'Lihat Harga (Partner)',
+                                    desc: priceUnlocked
+                                        ? 'Anda sudah masuk sebagai partner — semua harga terbaik ditampilkan.'
+                                        : 'Punya kode akses dari sales kami? Masuk untuk melihat harga khusus partner.',
+                                    action: !priceUnlocked && partnerPin ? () => setShowPinModal(true) : null,
+                                    done: priceUnlocked,
+                                },
+                                {
+                                    icon: MessageCircle,
+                                    title: 'Pesan via WhatsApp',
+                                    desc: 'Buka produk yang diminati lalu hubungi sales kami langsung dari halaman ini.',
+                                },
+                            ].map(({ icon: Icon, title, desc, action, done }, i) => {
+                                const Wrapper = action ? 'button' : 'div';
+                                return (
+                                    <Wrapper
+                                        key={title}
+                                        onClick={action ?? undefined}
+                                        className={`flex items-start gap-3 p-4 rounded-2xl border text-left transition ${
+                                            done
+                                                ? 'bg-emerald-500/8 border-emerald-500/25'
+                                                : isDark ? 'bg-white/3 border-white/7' : 'bg-white border-gray-200 shadow-sm'
+                                        } ${action ? (isDark ? 'hover:border-gold-500/40 hover:bg-gold-500/5 cursor-pointer' : 'hover:border-amber-300 hover:bg-amber-50/50 cursor-pointer') : ''}`}
+                                        style={{ animation: 'cardIn 0.4s ease both', animationDelay: `${i * 90}ms` }}
+                                    >
+                                        <div className={`relative w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                                            done ? 'bg-emerald-500/15 text-emerald-400'
+                                                : isDark ? 'bg-gold-500/10 text-gold-400' : 'bg-amber-50 text-amber-600'
+                                        }`}>
+                                            <Icon className="w-4 h-4" />
+                                            <span className={`absolute -top-1.5 -left-1.5 w-4 h-4 rounded-full text-[9px] font-black flex items-center justify-center ${
+                                                done ? 'bg-emerald-500 text-white' : 'bg-gold-500 text-navy-950'
+                                            }`}>{i + 1}</span>
+                                        </div>
+                                        <div className="min-w-0">
+                                            <p className={`text-xs font-bold ${done ? 'text-emerald-400' : isDark ? 'text-white' : 'text-gray-900'}`}>{title}</p>
+                                            <p className={`text-[11px] mt-1 leading-relaxed ${isDark ? 'text-navy-400' : 'text-gray-500'}`}>{desc}</p>
+                                            {action && (
+                                                <span className={`inline-flex items-center gap-1 mt-1.5 text-[11px] font-semibold ${isDark ? 'text-gold-400' : 'text-amber-600'}`}>
+                                                    Masukkan kode <ChevronRight className="w-3 h-3" />
+                                                </span>
+                                            )}
+                                        </div>
+                                    </Wrapper>
+                                );
+                            })}
+                        </div>
+
+                        {/* Featured / Hero Products */}
+                        {featured?.length > 0 && (
+                            <div className="mb-12">
+                                <div className="flex items-center justify-between mb-5">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-1 h-6 rounded-full bg-gradient-to-b from-gold-400 to-gold-600" />
+                                        <div>
+                                            <h2 className={`text-base font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>Produk Unggulan</h2>
+                                            <p className={`text-xs ${isDark ? 'text-navy-500' : 'text-gray-400'}`}>Pilihan terbaik untuk Anda</p>
+                                        </div>
+                                    </div>
+                                    <span className={`text-xs ${isDark ? 'text-navy-600' : 'text-gray-400'}`}>{featured.length} produk</span>
+                                </div>
+                                <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 sm:overflow-visible">
+                                    {featured.map((p, i) => (
+                                        <HeroProductCard key={`feat-${p.product_name}-${i}`} product={p} index={i} onClick={setSelectedProduct} priceUnlocked={anyUnlocked} isDark={isDark} />
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex items-center justify-between mb-8">
                             <div className="flex items-center gap-3">
                                 <div className="w-1 h-6 rounded-full bg-gradient-to-b from-gold-400 to-gold-600" />
@@ -626,7 +393,7 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
                                         onClick={handleBack}
                                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${isDark ? 'bg-white/5 border border-white/10 text-navy-300 hover:text-white hover:border-white/25 hover:bg-white/8' : 'bg-gray-100 border border-gray-200 text-gray-600 hover:text-gray-900 hover:bg-gray-200'}`}
                                     >
-                                        <ArrowLeft className="w-3.5 h-3.5" /> Merek
+                                        <ArrowLeft className="w-3.5 h-3.5" /> Kembali
                                     </button>
                                     {activeBrand ? (
                                         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -642,8 +409,9 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
                                 <div className="relative mb-3">
                                     <Search className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${isDark ? 'text-navy-500' : 'text-gray-400'}`} />
                                     <input
+                                        ref={searchInputRef}
                                         type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                                        placeholder={activeBrand ? `Cari di ${activeBrand}…` : 'Cari produk…'}
+                                        placeholder={activeBrand ? `Cari di ${activeBrand}…` : 'Cari nama produk, merek, atau kategori…'}
                                         className={`w-full pl-10 pr-10 py-2.5 rounded-xl text-sm border focus:outline-none focus:ring-2 focus:ring-gold-500/30 transition ${isDark ? 'bg-navy-800/60 border-white/8 text-white placeholder-navy-600 focus:border-gold-500/35' : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-amber-400'}`}
                                     />
                                     {searchTerm && (
@@ -653,7 +421,35 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
                                     )}
                                 </div>
 
-                                {visibleCategories.length > 0 && (
+                                {/* Source filter — pick where to search while a term is active */}
+                                {searching && (
+                                    <div className="flex items-center gap-1.5 mb-3">
+                                        <span className={`text-[10px] uppercase tracking-wider font-semibold ${isDark ? 'text-navy-500' : 'text-gray-400'}`}>Sumber</span>
+                                        {[
+                                            { key: 'all', label: 'Semua' },
+                                            { key: 'catalog', label: 'Katalog' },
+                                            { key: 'inventory', label: 'Inventori' },
+                                        ].map(({ key, label }) => (
+                                            <button
+                                                key={key}
+                                                onClick={() => setSearchSource(key)}
+                                                className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold border transition ${
+                                                    source === key
+                                                        ? key === 'inventory'
+                                                            ? 'bg-sky-500 text-white border-sky-500 shadow-md shadow-sky-500/25'
+                                                            : 'bg-gold-500 text-navy-950 border-gold-500 shadow-md shadow-gold-500/25'
+                                                        : isDark
+                                                            ? 'bg-transparent text-navy-400 border-white/10 hover:text-white hover:border-white/25'
+                                                            : 'bg-white text-gray-500 border-gray-200 hover:text-gray-900 hover:border-gray-300'
+                                                }`}
+                                            >
+                                                {label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {source !== 'inventory' && visibleCategories.length > 0 && (
                                     <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
                                         {[{ label: 'Semua', key: 'all', count: brandBaseProducts.length }, ...visibleCategories.map((c) => ({ label: c, key: c, count: categoryCounts[c] || 0 }))].map(({ label, key, count }) => (
                                             <button
@@ -679,8 +475,17 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
                         <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-7" style={{ animation: 'viewIn 0.3s ease both' }}>
                             <div className="flex items-center justify-between mb-5">
                                 <p className={`text-xs ${isDark ? 'text-navy-500' : 'text-gray-400'}`}>
-                                    <span className={`font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>{filtered.length}</span>
-                                    {activeBrand ? ` produk di ${activeBrand}` : ' produk'}
+                                    {source === 'inventory' ? (
+                                        <>
+                                            <span className={`font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>{invResults?.length ?? 0}</span>
+                                            {' item inventori'}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span className={`font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>{filtered.length}</span>
+                                            {activeBrand ? ` produk di ${activeBrand}` : ' produk'}
+                                        </>
+                                    )}
                                 </p>
                                 {(searchTerm || activeCategory !== 'all') && (
                                     <button onClick={() => { setSearchTerm(''); setActiveCategory('all'); }} className={`text-xs transition font-medium flex items-center gap-1 ${isDark ? 'text-gold-400 hover:text-gold-300' : 'text-amber-600 hover:text-amber-700'}`}>
@@ -689,12 +494,16 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
                                 )}
                             </div>
 
-                            {filtered.length > 0 ? (
+                            {source === 'inventory' ? null : filtered.length > 0 ? (
                                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
                                     {filtered.map((p, i) => (
-                                        <ProductCard key={`${p.brand}-${p.product_name}-${i}`} product={p} index={i} onClick={setSelectedProduct} priceUnlocked={priceUnlocked} isDark={isDark} />
+                                        <ProductCard key={`${p.brand}-${p.product_name}-${i}`} product={p} index={i} onClick={setSelectedProduct} priceUnlocked={anyUnlocked} isDark={isDark} />
                                     ))}
                                 </div>
+                            ) : (source !== 'catalog' && (invLoading || (invResults && invResults.length > 0))) ? (
+                                <p className={`text-sm text-center py-6 ${isDark ? 'text-navy-400' : 'text-gray-500'}`}>
+                                    Tidak ada di katalog — lihat hasil inventori di bawah.
+                                </p>
                             ) : (
                                 <div className="flex flex-col items-center justify-center py-28 text-center">
                                     <div className={`w-24 h-24 rounded-3xl flex items-center justify-center mb-6 shadow-xl ${isDark ? 'bg-navy-900/60 border border-white/5' : 'bg-white border border-gray-200'}`}>
@@ -711,6 +520,16 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
                                     )}
                                 </div>
                             )}
+
+                            {/* ── Inventory results (extracted component) ── */}
+                            <InventoryResults
+                                searching={searching}
+                                source={source}
+                                loading={invLoading}
+                                results={invResults}
+                                term={searchTerm.trim()}
+                                isDark={isDark}
+                            />
                         </main>
 
                         {filtered.length > 0 && (
@@ -733,6 +552,9 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
                                         <a href="tel:+6281910002704" className={`flex items-center gap-2 px-5 py-3 rounded-2xl text-sm font-semibold transition ${isDark ? 'bg-white/5 border border-white/10 text-navy-200 hover:bg-white/10 hover:text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 shadow-sm'}`}>
                                             <Phone className="w-4 h-4" /> Hubungi Kami
                                         </a>
+                                        <button onClick={() => setRegModal('register')} className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-gold-500 text-navy-950 text-sm font-bold hover:bg-gold-400 transition shadow-lg shadow-gold-500/25">
+                                            <UserPlus className="w-4 h-4" /> Daftar Channel
+                                        </button>
                                     </div>
                                 </div>
                             </section>
@@ -752,8 +574,18 @@ export default function Public({ products, categories, brands, priceUnlocked, pa
                 </footer>
             </div>
 
-            {selectedProduct && <ProductModal product={selectedProduct} onClose={() => setSelectedProduct(null)} priceUnlocked={priceUnlocked} isDark={isDark} />}
+            {selectedProduct && (
+                <ProductModal
+                    product={selectedProduct}
+                    onClose={() => setSelectedProduct(null)}
+                    priceUnlocked={anyUnlocked}
+                    isDark={isDark}
+                    hasPartnerPin={!!partnerPin}
+                    onPartnerLogin={() => { setSelectedProduct(null); setShowPinModal(true); }}
+                />
+            )}
             {showPinModal && <PartnerModal onClose={() => setShowPinModal(false)} error={pinError} isDark={isDark} />}
+            {regModal && <RegisterModal onClose={() => setRegModal(null)} isDark={isDark} initialMode={regModal} />}
 
             <a
                 href="https://wa.me/6281910002704" target="_blank" rel="noopener noreferrer"

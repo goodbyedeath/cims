@@ -8,11 +8,11 @@ import Badge from '@/Components/ui/Badge';
 import Modal from '@/Components/ui/Modal';
 import Pagination from '@/Components/ui/Pagination';
 import { Table, Thead, Tbody, Tr, Th, Td } from '@/Components/ui/Table';
-import { formatDate } from '@/Lib/utils';
-import { Send, Eye, Trash2, MessageSquare, Users, Filter, CheckCircle, XCircle, Info, FileText, Save, Plus, X, UserCheck, Search as SearchIcon } from 'lucide-react';
+import { formatDate, csrfHeaders } from '@/Lib/utils';
+import { Send, Eye, Trash2, MessageSquare, Users, Filter, CheckCircle, XCircle, Info, FileText, Save, Plus, X, UserCheck, Search as SearchIcon, Smartphone, AlertTriangle, Type, Image as ImageIcon, MapPin } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
-export default function Index({ blasts, provinces }) {
+export default function Index({ blasts, provinces, blastDevice }) {
     const [showComposeModal, setShowComposeModal] = useState(false);
     const [preview, setPreview] = useState(null);
     const [loadingPreview, setLoadingPreview] = useState(false);
@@ -30,7 +30,47 @@ export default function Index({ blasts, provinces }) {
         target: 'all',
         filters: { province: '', grade: '' },
         channel_ids: [],
+        drip_enabled: false,
+        scheduled_at: '',
+        blast_file_id: null,
+        message_type: 'text',
+        media_url: '',
+        location_lat: '',
+        location_lng: '',
     });
+
+    const [fileExpiry, setFileExpiry] = useState(6);
+    const [uploading, setUploading] = useState(false);
+    const [uploadedFile, setUploadedFile] = useState(null);
+    const [uploadError, setUploadError] = useState('');
+
+    const uploadFile = async (file) => {
+        if (!file) return;
+        setUploading(true); setUploadError('');
+        try {
+            const body = new FormData();
+            body.append('file', file);
+            body.append('expiry_hours', String(fileExpiry));
+            const res = await fetch('/wa-blast/upload-file', {
+                method: 'POST',
+                headers: { Accept: 'application/json', ...csrfHeaders() },
+                body,
+            });
+            const json = await res.json();
+            if (!res.ok || json.ok === false) {
+                setUploadError(json.errors?.file?.[0] || json.message || 'Upload gagal.');
+            } else {
+                setUploadedFile(json);
+                setData('blast_file_id', json.id);
+                if (!data.message.includes('{file}')) setData('message', (data.message ? data.message + '\n' : '') + '{file}');
+            }
+        } catch {
+            setUploadError('Upload gagal — coba lagi.');
+        }
+        setUploading(false);
+    };
+
+    const removeFile = () => { setUploadedFile(null); setData('blast_file_id', null); setUploadError(''); };
 
     const csrfToken = typeof document !== 'undefined' ? document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') : '';
 
@@ -51,7 +91,7 @@ export default function Index({ blasts, provinces }) {
         try {
             await fetch('/blast-templates', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...csrfHeaders() },
                 body: JSON.stringify({ name: templateName, type: 'wa', body: data.message }),
             });
             setShowSaveTemplate(false);
@@ -64,7 +104,7 @@ export default function Index({ blasts, provinces }) {
     const deleteTemplate = async (id) => {
         await fetch(`/blast-templates/${id}`, {
             method: 'DELETE',
-            headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
+            headers: { 'Accept': 'application/json', ...csrfHeaders() },
         });
         fetchTemplates();
     };
@@ -74,7 +114,7 @@ export default function Index({ blasts, provinces }) {
         try {
             const res = await fetch('/wa-blast/preview', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken },
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...csrfHeaders() },
                 body: JSON.stringify({ target: 'all' }),
             });
             const json = await res.json();
@@ -113,6 +153,8 @@ export default function Index({ blasts, provinces }) {
         reset();
         setPreview(null);
         setChannelSearch('');
+        setUploadedFile(null);
+        setUploadError('');
         fetchTemplates();
         setShowComposeModal(true);
     };
@@ -126,7 +168,7 @@ export default function Index({ blasts, provinces }) {
                 headers: {
                     'Content-Type': 'application/json',
                     'Accept': 'application/json',
-                    'X-CSRF-TOKEN': csrfToken,
+                    ...csrfHeaders(),
                 },
                 body: JSON.stringify({
                     target: data.target,
@@ -154,12 +196,23 @@ export default function Index({ blasts, provinces }) {
         });
     };
 
+    const dev = blastDevice || {};
+    const hasQuota = dev.quota != null && dev.quota_remaining != null;
+    const quotaPct = hasQuota && dev.quota > 0
+        ? Math.max(0, Math.min(100, Math.round((dev.quota_remaining / dev.quota) * 100)))
+        : 0;
+    const quotaColor = quotaPct > 30 ? 'bg-emerald-500' : quotaPct > 10 ? 'bg-amber-500' : 'bg-red-500';
+
     const statusBadge = (status) => {
         const map = {
             draft: 'bg-navy-700 text-navy-200',
+            queued: 'bg-sky-500/20 text-sky-400',
+            scheduled: 'bg-indigo-500/20 text-indigo-300',
             sending: 'bg-yellow-500/20 text-yellow-400',
+            cancelling: 'bg-orange-500/20 text-orange-400',
             completed: 'bg-emerald-500/20 text-emerald-400',
             failed: 'bg-red-500/20 text-red-400',
+            cancelled: 'bg-navy-600 text-navy-300',
         };
         return map[status] || '';
     };
@@ -172,6 +225,43 @@ export default function Index({ blasts, provinces }) {
                     <Send className="w-4 h-4" /> Compose Blast
                 </Button>
             </div>
+
+            {/* Blast device status + monthly quota (live from the gateway) */}
+            {dev.configured && (
+                <Card animate={false} className="mb-4">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${dev.connected ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
+                                <Smartphone className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <p className="text-sm font-semibold text-white">{dev.name}</p>
+                                <p className={`text-xs font-medium ${dev.connected ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {dev.reachable ? (dev.connected ? 'Terhubung' : `Terputus (${dev.status})`) : 'Gateway tidak merespons'}
+                                </p>
+                            </div>
+                        </div>
+                        {hasQuota && (
+                            <div className="min-w-[200px]">
+                                <div className="flex items-center justify-between text-xs mb-1">
+                                    <span className="text-navy-300">Kuota bulan ini</span>
+                                    <span className="font-semibold text-white tabular-nums">{dev.quota_remaining} / {dev.quota}</span>
+                                </div>
+                                <div className="h-2 rounded-full bg-navy-800 overflow-hidden">
+                                    <div className={`h-full rounded-full transition-all ${quotaColor}`} style={{ width: `${quotaPct}%` }} />
+                                </div>
+                                {dev.quota_resets && <p className="text-[11px] text-navy-500 mt-1">Reset {dev.quota_resets}</p>}
+                            </div>
+                        )}
+                    </div>
+                    {dev.reachable && !dev.connected && (
+                        <div className="flex items-start gap-2 mt-3 p-2.5 bg-red-500/10 border border-red-500/20 rounded-lg">
+                            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                            <p className="text-xs text-red-300">Device terputus — blast akan ditolak sampai tersambung. Buka <b>WA Devices</b>, scan QR, lalu ulangi.</p>
+                        </div>
+                    )}
+                </Card>
+            )}
 
             {/* Blast History */}
             <Card animate={false}>
@@ -356,6 +446,55 @@ export default function Index({ blasts, provinces }) {
                         </div>
                     )}
 
+                    {/* Message type */}
+                    <div>
+                        <label className="block text-sm font-medium text-navy-200 mb-1.5">Jenis Pesan</label>
+                        <div className="flex gap-2">
+                            {[
+                                { value: 'text', label: 'Teks', icon: Type },
+                                { value: 'image', label: 'Gambar', icon: ImageIcon },
+                                { value: 'location', label: 'Lokasi', icon: MapPin },
+                            ].map((opt) => (
+                                <button key={opt.value} type="button"
+                                    onClick={() => setData('message_type', opt.value)}
+                                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                                        data.message_type === opt.value
+                                            ? 'bg-gold-500/20 text-gold-400 border border-gold-500/30'
+                                            : 'bg-navy-800/50 text-navy-300 border border-white/5 hover:bg-white/5'
+                                    }`}>
+                                    <opt.icon className="w-4 h-4" /> {opt.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Image URL */}
+                    {data.message_type === 'image' && (
+                        <div>
+                            <label className="block text-sm font-medium text-navy-200 mb-1.5">URL Gambar</label>
+                            <Input value={data.media_url} onChange={(e) => setData('media_url', e.target.value)}
+                                placeholder="https://…/promo.jpg" error={errors.media_url} />
+                            <p className="text-[11px] text-navy-500 mt-1">Tautan gambar publik (jpg/png). Pesan di bawah jadi caption.</p>
+                        </div>
+                    )}
+
+                    {/* Location */}
+                    {data.message_type === 'location' && (
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-sm font-medium text-navy-200 mb-1.5">Latitude</label>
+                                <Input value={data.location_lat} onChange={(e) => setData('location_lat', e.target.value)}
+                                    placeholder="-6.2088" error={errors.location_lat} />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-navy-200 mb-1.5">Longitude</label>
+                                <Input value={data.location_lng} onChange={(e) => setData('location_lng', e.target.value)}
+                                    placeholder="106.8456" error={errors.location_lng} />
+                            </div>
+                            <p className="col-span-2 text-[11px] text-navy-500 -mt-1">Pesan di bawah jadi label/alamat lokasi.</p>
+                        </div>
+                    )}
+
                     {/* Templates */}
                     {templates.length > 0 && (
                         <div>
@@ -380,7 +519,9 @@ export default function Index({ blasts, provinces }) {
                     {/* Message */}
                     <div>
                         <div className="flex items-center justify-between mb-1.5">
-                            <label className="text-sm font-medium text-navy-200">Message</label>
+                            <label className="text-sm font-medium text-navy-200">
+                                {data.message_type === 'image' ? 'Caption' : data.message_type === 'location' ? 'Label / Alamat' : 'Message'}
+                            </label>
                             {data.message.trim() && (
                                 showSaveTemplate ? (
                                     <div className="flex items-center gap-1.5">
@@ -413,7 +554,7 @@ export default function Index({ blasts, provinces }) {
                         {errors.message && <p className="text-xs text-red-400 mt-1">{errors.message}</p>}
                         <div className="flex flex-wrap gap-1.5 mt-2">
                             <span className="text-xs text-navy-400">Placeholders:</span>
-                            {['{company_name}', '{owner_name}', '{owner_title}', '{owner_greeting}', '{channel_code}'].map((p) => (
+                            {['{company_name}', '{owner_name}', '{owner_title}', '{owner_greeting}', '{channel_code}', '{file}'].map((p) => (
                                 <button
                                     key={p}
                                     type="button"
@@ -424,6 +565,9 @@ export default function Index({ blasts, provinces }) {
                                 </button>
                             ))}
                         </div>
+                        <p className="text-[11px] text-navy-500 mt-1.5">
+                            Variasi anti-ban: tulis <code className="text-gold-400">{'{halo|hai|selamat}'}</code> — tiap penerima dapat salah satu acak.
+                        </p>
                     </div>
 
                     {/* Preview Button */}
@@ -435,6 +579,9 @@ export default function Index({ blasts, provinces }) {
                         {preview && (
                             <span className="text-sm text-navy-300">
                                 <span className="text-gold-400 font-bold">{preview.count}</span> channel akan menerima pesan
+                                {preview.cooldown_skipped > 0 && (
+                                    <span className="text-amber-400"> · {preview.cooldown_skipped} dilewati (cooldown {preview.cooldown_days} hari)</span>
+                                )}
                             </span>
                         )}
                     </div>
@@ -465,12 +612,86 @@ export default function Index({ blasts, provinces }) {
                         </div>
                     )}
 
+                    {/* Attachment (tracked download link, not a WA media send) */}
+                    <div className="rounded-xl border border-white/10 bg-navy-800/40 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                            <label className="text-sm font-semibold text-white flex items-center gap-1.5">
+                                <FileText className="w-4 h-4 text-gold-400" /> Lampiran File (opsional)
+                            </label>
+                            <select
+                                value={fileExpiry}
+                                onChange={(e) => setFileExpiry(Number(e.target.value))}
+                                disabled={!!uploadedFile}
+                                className="text-xs bg-navy-800/60 border border-white/10 rounded-lg px-2 py-1 text-navy-200 disabled:opacity-50"
+                            >
+                                <option value={1}>Kedaluwarsa 1 jam</option>
+                                <option value={2}>2 jam</option>
+                                <option value={6}>6 jam</option>
+                                <option value={12}>12 jam</option>
+                                <option value={24}>1 hari</option>
+                                <option value={48}>2 hari</option>
+                            </select>
+                        </div>
+                        {uploadedFile ? (
+                            <div className="flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+                                <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                                <span className="text-sm text-white truncate flex-1">{uploadedFile.name}</span>
+                                <span className="text-xs text-navy-400">{uploadedFile.size}</span>
+                                <button type="button" onClick={removeFile} className="text-navy-400 hover:text-red-400 transition"><X className="w-4 h-4" /></button>
+                            </div>
+                        ) : (
+                            <label className={`flex items-center justify-center gap-2 px-3 py-2.5 border border-dashed border-white/15 rounded-lg cursor-pointer text-sm text-navy-300 hover:bg-white/5 transition ${uploading ? 'opacity-60 pointer-events-none' : ''}`}>
+                                {uploading ? 'Mengunggah…' : 'Pilih file (PDF, gambar, dokumen, zip · maks 20 MB)'}
+                                <input type="file" className="hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.zip"
+                                    onChange={(e) => uploadFile(e.target.files?.[0])} />
+                            </label>
+                        )}
+                        {uploadError && <p className="text-xs text-red-400 mt-1">{uploadError}</p>}
+                        <p className="text-[11px] text-navy-500 mt-1.5">Dikirim sebagai tautan unduh unik per penerima (bisa dilacak siapa yang membuka). Sisipkan <code className="text-gold-400">{'{file}'}</code> di pesan.</p>
+                    </div>
+
+                    {/* Sending mode: drip + optional schedule */}
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        <button
+                            type="button"
+                            onClick={() => setData('drip_enabled', !data.drip_enabled)}
+                            className={`text-left rounded-xl border p-3 transition ${
+                                data.drip_enabled
+                                    ? 'border-gold-500/50 bg-gold-500/10'
+                                    : 'border-white/10 bg-navy-800/40 hover:bg-white/5'
+                            }`}
+                        >
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-sm font-semibold text-white">Mode Drip (anti-ban)</span>
+                                <span className={`w-9 h-5 rounded-full transition relative ${data.drip_enabled ? 'bg-gold-500' : 'bg-navy-600'}`}>
+                                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${data.drip_enabled ? 'left-4' : 'left-0.5'}`} />
+                                </span>
+                            </div>
+                            <p className="text-[11px] text-navy-400 mt-1">
+                                Bertahap Sen–Sab 08:00–17:00 WIB, jatah harian naik seiring umur nomor (1–4 mnt/pesan). Cocok untuk daftar besar / nomor baru.
+                            </p>
+                        </button>
+                        <div className="rounded-xl border border-white/10 bg-navy-800/40 p-3">
+                            <label className="block text-sm font-semibold text-white mb-1.5">Jadwalkan (opsional)</label>
+                            <input
+                                type="datetime-local"
+                                value={data.scheduled_at}
+                                onChange={(e) => setData('scheduled_at', e.target.value)}
+                                className="w-full px-3 py-2 bg-navy-800/60 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-gold-500/30"
+                            />
+                            <p className="text-[11px] text-navy-400 mt-1">Kosongkan untuk kirim sekarang. Waktu server (WIB).</p>
+                            {errors.scheduled_at && <p className="text-[11px] text-red-400 mt-1">{errors.scheduled_at}</p>}
+                        </div>
+                    </div>
+
                     {/* Info Box */}
                     <div className="flex items-start gap-3 p-3 bg-navy-800/50 rounded-xl border border-white/5">
                         <Info className="w-4 h-4 text-gold-400 shrink-0 mt-0.5" />
                         <p className="text-xs text-navy-300">
-                            Pesan dikirim satu per satu dengan jeda 0.5 detik. Pastikan Fonnte API key sudah dikonfigurasi di .env.
-                            Channel tanpa nomor telepon akan dilewati.
+                            Blast diproses di latar belakang lewat antrean — pesan dikirim satu per satu dengan jeda acak
+                            5–45 detik (anti-ban), jadi bisa ditutup dan dipantau di halaman detail. Otomatis berhenti sejenak
+                            bila device terputus (lanjut saat tersambung), dan berhenti bila 10 gagal berturut-turut. Channel
+                            yang baru saja diblast dilewati (cooldown), begitu pula nomor tanpa telepon.
                         </p>
                     </div>
 
@@ -478,7 +699,11 @@ export default function Index({ blasts, provinces }) {
                     <div className="flex gap-3 pt-2">
                         <Button type="submit" disabled={processing || !preview || preview.count === 0}>
                             <Send className="w-4 h-4" />
-                            {processing ? 'Mengirim...' : `Kirim ke ${preview?.count || 0} Channel`}
+                            {processing
+                                ? 'Memproses...'
+                                : data.scheduled_at
+                                    ? `Jadwalkan ke ${preview?.count || 0} Channel`
+                                    : `Kirim ke ${preview?.count || 0} Channel`}
                         </Button>
                         <Button type="button" variant="secondary" onClick={() => setShowComposeModal(false)}>Cancel</Button>
                     </div>

@@ -6,22 +6,30 @@ namespace App\Http\Controllers;
 
 use App\Models\CatalogSetting;
 use App\Models\Channel;
+use App\Models\EmailAccount;
 use App\Models\EmailBlast;
+use App\Models\EmailBlastRecipient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class EmailBlastController extends Controller
 {
     public function index(): Response
     {
-        $blasts = EmailBlast::with('user:id,name')
+        $blasts = EmailBlast::with(['user:id,name', 'emailAccount:id,name,email'])
+            ->withCount([
+                'recipients as opened_count' => fn ($q) => $q->whereNotNull('opened_at'),
+                'recipients as pending_count' => fn ($q) => $q->whereIn('status', ['pending', 'processing']),
+            ])
             ->latest()
             ->paginate(15)
             ->withQueryString();
@@ -38,6 +46,11 @@ class EmailBlastController extends Controller
         return Inertia::render('EmailBlast/Index', [
             'blasts' => $blasts,
             'provinces' => $provinces,
+            // SMTP accounts this user can send from (shared + personal).
+            'emailAccounts' => EmailAccount::visibleTo(Auth::user())
+                ->orderBy('name')
+                ->get(['id', 'name', 'email', 'from_name']),
+            'defaultFrom' => config('mail.from.address'),
         ]);
     }
 
@@ -58,86 +71,289 @@ class EmailBlastController extends Controller
         ]);
     }
 
-    public function send(Request $request): RedirectResponse
+    /**
+     * Prepare a blast: store attachments, create the blast record and one
+     * "pending" recipient row per channel. Actual sending happens in batches
+     * via processBatch() so a large blast never blocks a single request long
+     * enough to hit the web server / PHP execution timeout.
+     */
+    public function send(Request $request): JsonResponse
     {
         $request->validate([
             'title' => ['required', 'string', 'max:100'],
             'subject' => ['required', 'string', 'max:200'],
             'body' => ['required', 'string', 'max:10000'],
             'sender_name' => ['nullable', 'string', 'max:100'],
+            'email_account_id' => ['nullable', 'integer', 'exists:email_accounts,id'],
             'target' => ['required', 'in:all,filtered,selected'],
             'filters' => ['nullable', 'array'],
             'channel_ids' => ['nullable', 'array'],
+            'attachments' => ['nullable', 'array', 'max:3'],
+            'attachments.*' => [
+                'file', 'max:5120',
+                'mimes:pdf,doc,docx,xls,xlsx,ppt,pptx,jpg,jpeg,png,zip,csv,txt',
+            ],
         ]);
 
         $channels = $this->buildQuery($request)
-            ->get(['id', 'channel_code', 'company_name', 'email', 'owner_name']);
+            ->get(['id', 'email']);
 
         if ($channels->isEmpty()) {
-            return back()->with('error', 'Tidak ada channel dengan email.');
+            return response()->json(['message' => 'Tidak ada channel dengan email.'], 422);
+        }
+
+        // The chosen sending account must be shared or the user's own.
+        if ($request->filled('email_account_id')
+            && ! EmailAccount::visibleTo(Auth::user())->whereKey($request->email_account_id)->exists()) {
+            return response()->json(['message' => 'Akun email tidak tersedia untuk Anda.'], 422);
+        }
+
+        $attachments = [];
+        foreach ($request->file('attachments', []) as $file) {
+            $path = $file->store('email-blast-attachments', 'local');
+            $attachments[] = [
+                'path' => $path,
+                'name' => $file->getClientOriginalName(),
+                'mime' => $file->getMimeType(),
+                'size' => $file->getSize(),
+            ];
         }
 
         $blast = EmailBlast::create([
             'user_id' => Auth::id(),
+            'email_account_id' => $request->email_account_id ?: null,
             'title' => $request->title,
             'subject' => $request->subject,
             'body' => $request->body,
             'total_recipients' => $channels->count(),
             'status' => 'sending',
             'filters' => $request->filters,
+            'attachments' => $attachments,
+            'sender_name' => $request->sender_name ?: null,
         ]);
 
-        $sentCount = 0;
-        $failedCount = 0;
+        $now = now();
+        $rows = $channels->map(fn ($c) => [
+            'email_blast_id' => $blast->id,
+            'channel_id'     => $c->id,
+            'email'          => $c->email,
+            'status'         => 'pending',
+            'created_at'     => $now,
+            'updated_at'     => $now,
+        ])->all();
 
-        foreach ($channels as $channel) {
-            $personalBody    = $this->renderTemplate($request->body, $channel);
-            $personalSubject = $this->replacePlaceholders($request->subject, $channel);
-
-            try {
-                $senderName = $request->sender_name ?: config('mail.from.name');
-                $fromAddress = config('mail.from.address');
-
-                Mail::html($personalBody, function ($msg) use ($channel, $personalSubject, $senderName, $fromAddress) {
-                    $msg->from($fromAddress, $senderName)
-                        ->to($channel->email)
-                        ->subject($personalSubject);
-                });
-
-                $blast->recipients()->create([
-                    'channel_id' => $channel->id,
-                    'email' => $channel->email,
-                    'status' => 'sent',
-                    'sent_at' => now(),
-                ]);
-                $sentCount++;
-            } catch (\Throwable $e) {
-                Log::error("Email blast failed [{$channel->email}]: {$e->getMessage()}");
-                $blast->recipients()->create([
-                    'channel_id' => $channel->id,
-                    'email' => $channel->email,
-                    'status' => 'failed',
-                    'error' => $e->getMessage(),
-                ]);
-                $failedCount++;
-            }
-
-            usleep(200000); // 0.2s delay
+        foreach (array_chunk($rows, 500) as $chunk) {
+            EmailBlastRecipient::insert($chunk);
         }
 
-        $blast->update([
-            'sent_count' => $sentCount,
-            'failed_count' => $failedCount,
-            'status' => $failedCount === $channels->count() ? 'failed' : 'completed',
+        return response()->json([
+            'blast_id' => $blast->id,
+            'total'    => $blast->total_recipients,
+        ]);
+    }
+
+    /**
+     * Send the next batch of pending recipients for a blast. Driven repeatedly
+     * by the client until no pending recipients remain.
+     */
+    public function processBatch(Request $request, EmailBlast $emailBlast): JsonResponse
+    {
+        $request->validate(['size' => ['nullable', 'integer', 'min:1', 'max:50']]);
+        $batchSize = (int) $request->input('size', 25);
+
+        set_time_limit(120);
+
+        // Recover rows stranded in "processing" by a driver that died mid-batch
+        // (browser closed, PHP killed) so they become claimable again.
+        $emailBlast->recipients()
+            ->where('status', 'processing')
+            ->where('updated_at', '<', now()->subMinutes(10))
+            ->update(['status' => 'pending']);
+
+        // Claim the batch atomically: two concurrent drivers (compose-modal loop
+        // + Show-page resume, or two tabs) must never grab the same rows — that
+        // double-sends. lockForUpdate makes the second claimer wait, then see
+        // "processing" and pick different rows.
+        $claimedIds = [];
+        \Illuminate\Support\Facades\DB::transaction(function () use ($emailBlast, $batchSize, &$claimedIds) {
+            $claimedIds = $emailBlast->recipients()
+                ->where('status', 'pending')
+                ->orderBy('id')
+                ->limit($batchSize)
+                ->lockForUpdate()
+                ->pluck('id')
+                ->all();
+
+            if ($claimedIds !== []) {
+                EmailBlastRecipient::whereIn('id', $claimedIds)->update(['status' => 'processing']);
+            }
+        });
+
+        $pending = $emailBlast->recipients()->whereIn('id', $claimedIds)->get();
+
+        if ($pending->isNotEmpty()) {
+            $channels = Channel::whereIn('id', $pending->pluck('channel_id'))
+                ->get(['id', 'channel_code', 'company_name', 'email', 'owner_name', 'gender'])
+                ->keyBy('id');
+
+            // Send through the blast's chosen SMTP account; NULL = .env default.
+            $account     = $emailBlast->emailAccount;
+            $mailer      = $account ? Mail::build($account->mailerConfig()) : Mail::mailer();
+            $senderName  = $emailBlast->sender_name ?: ($account?->from_name ?: config('mail.from.name'));
+            $fromAddress = $account?->email ?: config('mail.from.address');
+            $attachments = $emailBlast->attachments ?? [];
+
+            foreach ($pending as $recipient) {
+                $channel = $channels->get($recipient->channel_id);
+
+                if (!$channel) {
+                    $recipient->update(['status' => 'failed', 'error' => 'Channel not found']);
+                    continue;
+                }
+
+                try {
+                    $personalBody    = $this->renderTemplate($emailBlast->body, $channel, $recipient->id);
+                    $personalSubject = $this->replacePlaceholders($emailBlast->subject, $channel);
+
+                    $mailer->html($personalBody, function ($msg) use ($channel, $personalSubject, $senderName, $fromAddress, $attachments) {
+                        $msg->from($fromAddress, $senderName)
+                            ->to($channel->email)
+                            ->subject($personalSubject);
+
+                        foreach ($attachments as $attachment) {
+                            $msg->attach(Storage::disk('local')->path($attachment['path']), [
+                                'as'   => $attachment['name'],
+                                'mime' => $attachment['mime'],
+                            ]);
+                        }
+                    });
+
+                    $recipient->update(['status' => 'sent', 'sent_at' => now(), 'error' => null]);
+                } catch (\Throwable $e) {
+                    Log::error("Email blast failed [{$recipient->email}]: {$e->getMessage()}");
+                    $recipient->update(['status' => 'failed', 'error' => $e->getMessage()]);
+                }
+
+                usleep(100000); // 0.1s — gentle SMTP pacing
+            }
+        }
+
+        $sent      = $emailBlast->recipients()->where('status', 'sent')->count();
+        $failed    = $emailBlast->recipients()->where('status', 'failed')->count();
+        // "processing" rows belong to another concurrent driver — still remaining.
+        $remaining = $emailBlast->recipients()->whereIn('status', ['pending', 'processing'])->count();
+        $done      = $remaining === 0;
+
+        $emailBlast->update([
+            'sent_count'   => $sent,
+            'failed_count' => $failed,
+            'status'       => $done
+                ? ($sent === 0 ? 'failed' : 'completed')
+                : 'sending',
         ]);
 
-        return back()->with('success', "Email blast selesai: {$sentCount} terkirim, {$failedCount} gagal.");
+        return response()->json([
+            'sent'      => $sent,
+            'failed'    => $failed,
+            'remaining' => $remaining,
+            'total'     => $emailBlast->total_recipients,
+            'done'      => $done,
+        ]);
+    }
+
+    /**
+     * Send the composed email to one address (usually the sender's own inbox)
+     * so the real rendering/deliverability can be checked before blasting.
+     * Attachments are not included — they're only uploaded on the real send.
+     */
+    public function testSend(Request $request): JsonResponse
+    {
+        $request->validate([
+            'email' => ['required', 'email'],
+            'subject' => ['required', 'string', 'max:200'],
+            'body' => ['required', 'string', 'max:10000'],
+            'sender_name' => ['nullable', 'string', 'max:100'],
+            'email_account_id' => ['nullable', 'integer', 'exists:email_accounts,id'],
+        ]);
+
+        $account = $request->filled('email_account_id')
+            ? EmailAccount::visibleTo(Auth::user())->whereKey($request->email_account_id)->first()
+            : null;
+
+        if ($request->filled('email_account_id') && ! $account) {
+            return response()->json(['ok' => false, 'message' => 'Akun email tidak tersedia untuk Anda.'], 422);
+        }
+
+        $dummy = new Channel([
+            'company_name' => 'PT Contoh Mitra Jaya',
+            'owner_name'   => 'Ahmad Santoso',
+            'channel_code' => 'CH-TEST',
+            'gender'       => 'male',
+        ]);
+
+        try {
+            $html = $this->renderTemplate($request->body, $dummy);
+            $subject = '[TEST] ' . $this->replacePlaceholders($request->subject, $dummy);
+            $senderName = $request->sender_name ?: ($account?->from_name ?: config('mail.from.name'));
+            $fromAddress = $account?->email ?: config('mail.from.address');
+            $mailer = $account ? Mail::build($account->mailerConfig()) : Mail::mailer();
+
+            $mailer->html($html, fn ($msg) => $msg
+                ->from($fromAddress, $senderName)
+                ->to($request->email)
+                ->subject($subject));
+        } catch (\Throwable $e) {
+            Log::error("Email blast test send failed [{$request->email}]: {$e->getMessage()}");
+
+            return response()->json(['ok' => false, 'message' => 'Gagal mengirim: ' . $e->getMessage()], 422);
+        }
+
+        return response()->json(['ok' => true, 'message' => "Email test terkirim ke {$request->email}."]);
+    }
+
+    /**
+     * Re-queue every failed recipient of a finished blast as "pending" so the
+     * client can drive processBatch() again — transient SMTP failures become
+     * recoverable instead of permanent.
+     */
+    public function retryFailed(EmailBlast $emailBlast): JsonResponse
+    {
+        $requeued = $emailBlast->recipients()
+            ->where('status', 'failed')
+            ->update(['status' => 'pending', 'error' => null]);
+
+        if ($requeued === 0) {
+            return response()->json(['ok' => false, 'message' => 'Tidak ada penerima gagal untuk diulang.'], 422);
+        }
+
+        $emailBlast->update(['status' => 'sending']);
+
+        return response()->json(['ok' => true, 'requeued' => $requeued]);
+    }
+
+    /**
+     * Open-tracking pixel (signed public URL embedded in each sent email).
+     * Records the first open, then always returns a 1×1 transparent GIF.
+     */
+    public function trackOpen(EmailBlastRecipient $recipient): \Illuminate\Http\Response
+    {
+        if ($recipient->opened_at === null) {
+            $recipient->update(['opened_at' => now()]);
+        }
+
+        $gif = base64_decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
+
+        return response($gif, 200, [
+            'Content-Type' => 'image/gif',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+        ]);
     }
 
     public function show(EmailBlast $emailBlast): Response
     {
         $emailBlast->load([
             'user:id,name',
+            'emailAccount:id,name,email',
             'recipients.channel:id,channel_code,company_name',
         ]);
 
@@ -148,9 +364,22 @@ class EmailBlastController extends Controller
 
     public function destroy(EmailBlast $emailBlast): RedirectResponse
     {
+        foreach ($emailBlast->attachments ?? [] as $attachment) {
+            Storage::disk('local')->delete($attachment['path']);
+        }
+
         $emailBlast->delete();
 
         return back()->with('success', 'Email blast history deleted.');
+    }
+
+    public function downloadAttachment(EmailBlast $emailBlast, int $index): StreamedResponse
+    {
+        $attachment = $emailBlast->attachments[$index] ?? null;
+
+        abort_unless($attachment && Storage::disk('local')->exists($attachment['path']), 404);
+
+        return Storage::disk('local')->download($attachment['path'], $attachment['name']);
     }
 
     public function renderPreview(Request $request): JsonResponse
@@ -175,9 +404,10 @@ class EmailBlastController extends Controller
     // ─── Helpers ────────────────────────────────────────────────────────────────
 
     /**
-     * Wrap plain-text body inside the branded HTML template.
+     * Wrap plain-text body inside the branded HTML template. When a recipient
+     * id is given, an open-tracking pixel (signed URL) is embedded.
      */
-    private function renderTemplate(string $plainText, Channel $channel): string
+    private function renderTemplate(string $plainText, Channel $channel, ?int $recipientId = null): string
     {
         $templatePath = resource_path('email-templates/base.html');
         $html = file_get_contents($templatePath);
@@ -227,6 +457,16 @@ class EmailBlastController extends Controller
 
         // Inject content — convert plain text → styled HTML paragraphs
         $html = str_replace('{{content}}', $this->textToHtml($plainText), $html);
+
+        // Open-tracking pixel — signed so recipient ids can't be enumerated.
+        if ($recipientId !== null) {
+            $pixelUrl = URL::signedRoute('email-blast.open', ['recipient' => $recipientId]);
+            $html = str_replace(
+                '</body>',
+                '<img src="' . htmlspecialchars($pixelUrl, ENT_QUOTES, 'UTF-8') . '" width="1" height="1" alt="" style="display:block;border:0;" /></body>',
+                $html
+            );
+        }
 
         // Per-channel personalisation (existing {placeholder} system)
         // Generate a signed unsubscribe URL valid for 30 days (null-safe for preview dummy)
@@ -288,7 +528,7 @@ class EmailBlastController extends Controller
 
         return str_replace(
             ['{company_name}', '{owner_name}', '{channel_code}', '{owner_title}', '{owner_greeting}', '{unsubscribe_url}'],
-            [$channel->company_name, $channel->owner_name ?? '', $channel->channel_code, "{$title} {$channel->owner_name}", $greeting, $unsubscribeUrl],
+            [e($channel->company_name), e($channel->owner_name ?? ''), e($channel->channel_code), e("{$title} {$channel->owner_name}"), e($greeting), $unsubscribeUrl],
             $text
         );
     }

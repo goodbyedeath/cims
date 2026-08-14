@@ -4,11 +4,22 @@ import KpiCard from '@/Components/KpiCard';
 import Badge from '@/Components/ui/Badge';
 import Button from '@/Components/ui/Button';
 import { Table, Thead, Tbody, Tr, Th, Td } from '@/Components/ui/Table';
+import ReportInsights from '@/Components/ReportInsights';
+import { TrendChart, StatusBreakdown } from '@/Components/ReportCharts';
 import { formatCurrency, gradeColor } from '@/Lib/utils';
 import { ShoppingCart, CheckCircle, XCircle, Clock, DollarSign, Building2, Download, ArrowLeft } from 'lucide-react';
 import { Link } from '@inertiajs/react';
 
+function deltaSubtitle(delta, unit = 'week') {
+    if (delta === null || delta === undefined) return `vs last ${unit}`;
+    const arrow = delta >= 0 ? '▲' : '▼';
+    return `${arrow} ${Math.abs(delta)}% vs last ${unit}`;
+}
+
 export default function Weekly({ report }) {
+    const od = report.deltas?.orders;
+    const rd = report.deltas?.revenue;
+
     return (
         <AuthenticatedLayout title="Weekly Report">
             <div className="flex items-center justify-between mb-6">
@@ -25,13 +36,22 @@ export default function Weekly({ report }) {
                 </a>
             </div>
 
+            <ReportInsights type="weekly" />
+
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-                <KpiCard title="Total Orders" value={report.totalOrders} icon={ShoppingCart} color="blue" index={0} />
+                <KpiCard title="Total Orders" value={report.totalOrders} subtitle={deltaSubtitle(od)} icon={ShoppingCart} color="blue" index={0} />
                 <KpiCard title="Delivered" value={report.deliveredOrders} icon={CheckCircle} color="emerald" index={1} />
                 <KpiCard title="Cancelled" value={report.cancelledOrders} icon={XCircle} color="red" index={2} />
                 <KpiCard title="Pending" value={report.pendingOrders} icon={Clock} color="purple" index={3} />
-                <KpiCard title="Revenue" value={formatCurrency(report.revenue)} icon={DollarSign} color="gold" index={4} />
+                <KpiCard title="Revenue" value={formatCurrency(report.revenue)} subtitle={deltaSubtitle(rd)} icon={DollarSign} color="gold" index={4} />
                 <KpiCard title="New Channels" value={report.newChannels} icon={Building2} color="indigo" index={5} />
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
+                <div className="xl:col-span-2">
+                    <TrendChart data={report.trend} title="8-Week Revenue & Order Trend" />
+                </div>
+                <StatusBreakdown data={report.statusBreakdown} title="This Week by Status" />
             </div>
 
             <Card>

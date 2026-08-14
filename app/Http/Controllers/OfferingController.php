@@ -86,12 +86,19 @@ class OfferingController extends Controller
             $tax        = round($subtotal * ($taxRate / 100));
             $grandTotal = $subtotal - $discount + $tax;
 
-            // Generate ref_no: PEN03 + ddmmyy + 3-digit daily sequence
+            // Generate ref_no: PEN03 + ddmm0yy + 3-digit daily sequence — the
+            // same 15-char format as orders (e.g. PEN032805026001). Sequence is
+            // derived from max(ref_no), not a row count, so deletions can never
+            // cause a duplicate ref.
             $offeringDate = $validated['offering_date'];
-            $seqToday     = Offering::whereDate('offering_date', $offeringDate)->lockForUpdate()->count();
-            $seq          = $seqToday + 1;
-            $datePart     = \Carbon\Carbon::parse($offeringDate)->format('dmy');
-            $refNo        = 'PEN03' . $datePart . str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
+            $d            = \Carbon\Carbon::parse($offeringDate);
+            $datePart     = $d->format('dm') . '0' . $d->format('y'); // ddmm0yy
+            $prefix       = 'PEN03' . $datePart;
+            $lastRefNo    = Offering::where('ref_no', 'like', $prefix . '%')
+                ->lockForUpdate()
+                ->max('ref_no');
+            $seq          = $lastRefNo ? ((int) substr($lastRefNo, -3)) + 1 : 1;
+            $refNo        = $prefix . str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
 
             $offering = Offering::create([
                 'offering_no'   => 'OFF-' . strtoupper(Str::random(8)),

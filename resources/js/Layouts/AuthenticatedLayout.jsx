@@ -4,31 +4,77 @@ import { Link, usePage, router } from '@inertiajs/react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import {
     LayoutDashboard, Building2, ShoppingCart, CreditCard,
-    Map, Brain, FileText, Bell, Menu, X, ChevronDown,
+    Map, Brain, FileText, Bell, Menu, X, ChevronDown, Store,
     LogOut, User, Package, Users, MessageSquare, Mail,
     AlertTriangle, CheckCheck, ClipboardList, ExternalLink, Clock, ShieldAlert,
-    GripVertical, Check, Kanban, Download, MonitorSmartphone, BookOpen, Settings, Search
+    GripVertical, Check, Kanban, Download, MonitorSmartphone, BookOpen, Settings, Search,
+    Sparkles, Bot, ListChecks, ScanText, Smartphone
 } from 'lucide-react';
-import { cn } from '@/Lib/utils';
+import { cn, csrfHeaders } from '@/Lib/utils';
 
-const baseNavItems = [
-    { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Channels', href: '/channels', icon: Building2 },
-    { name: 'Orders', href: '/orders', icon: ShoppingCart },
-    { name: 'Offerings', href: '/offerings', icon: FileText },
-    { name: 'Payments', href: '/payments', icon: CreditCard },
-    { name: 'Map', href: '/map', icon: Map },
-    { name: 'Inventory', href: '/inventory', icon: Package },
-    { name: 'Catalog', href: '/catalog', icon: BookOpen },
-    { name: 'Search', href: '/search', icon: Search },
-    { name: 'AI Scores', href: '/ai-scores', icon: Brain },
-    { name: 'Reports', href: '/reports', icon: FileText },
-    { name: 'WA Blast', href: '/wa-blast', icon: MessageSquare },
-    { name: 'Email Blast', href: '/email-blast', icon: Mail },
-    { name: 'Requests', href: '/channel-requests', icon: ClipboardList },
-    { name: 'Pipeline', href: '/pipeline', icon: Kanban },
-    { name: 'Accounts', href: '/users', icon: Users, admin: true },
-    { name: 'Login Logs', href: '/login-attempts', icon: ShieldAlert, admin: true },
+// Sidebar navigation grouped into collapsible categories. Item order within a
+// category can still be drag-customized (persisted per role); category
+// collapse state is persisted separately.
+const NAV_CATEGORIES = [
+    {
+        key: 'overview',
+        label: 'Overview',
+        items: [
+            { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+            { name: 'Reports', href: '/reports', icon: FileText },
+            { name: 'Map', href: '/map', icon: Map },
+            { name: 'Search', href: '/search', icon: Search },
+        ],
+    },
+    {
+        key: 'sales',
+        label: 'Sales',
+        items: [
+            { name: 'Channels', href: '/channels', icon: Building2 },
+            { name: 'Find Prospect', href: '/leads', icon: Store, admin: true },
+            { name: 'Requests', href: '/channel-requests', icon: ClipboardList },
+            { name: 'Pipeline', href: '/pipeline', icon: Kanban },
+            { name: 'Orders', href: '/orders', icon: ShoppingCart },
+            { name: 'Offerings', href: '/offerings', icon: FileText },
+            { name: 'Payments', href: '/payments', icon: CreditCard },
+        ],
+    },
+    {
+        key: 'products',
+        label: 'Products',
+        items: [
+            { name: 'Inventory', href: '/inventory', icon: Package },
+            { name: 'Catalog', href: '/catalog', icon: BookOpen },
+        ],
+    },
+    {
+        key: 'messaging',
+        label: 'Messaging',
+        items: [
+            { name: 'WA Blast', href: '/wa-blast', icon: MessageSquare },
+            { name: 'WA Chatbot', href: '/wa-bot', icon: Bot, admin: true },
+            { name: 'WA Forms', href: '/wa-forms', icon: ListChecks, admin: true },
+            { name: 'WA Devices', href: '/wa-devices', icon: Smartphone, admin: true },
+            { name: 'Email Blast', href: '/email-blast', icon: Mail },
+        ],
+    },
+    {
+        key: 'ai',
+        label: 'AI Tools',
+        items: [
+            { name: 'AI Scores', href: '/ai-scores', icon: Brain },
+            { name: 'RAG', href: '/admin/rag', icon: Sparkles, admin: true, healthGated: true },
+            { name: 'OCR', href: '/ocr', icon: ScanText, admin: true },
+        ],
+    },
+    {
+        key: 'admin',
+        label: 'Administration',
+        items: [
+            { name: 'Accounts', href: '/users', icon: Users, admin: true },
+            { name: 'Login Logs', href: '/login-attempts', icon: ShieldAlert, admin: true },
+        ],
+    },
 ];
 
 const notifIcons = {
@@ -47,7 +93,52 @@ const notifColors = {
 
 export default function AuthenticatedLayout({ children, title }) {
     const { auth, flash, unreadNotifications, company } = usePage().props;
-    const navItems = baseNavItems.filter((item) => !item.admin || auth?.user?.role === 'admin');
+    const isAdmin = auth?.user?.role === 'admin';
+    // Categories visible to this role — a category disappears entirely when all
+    // of its items are admin-only and the user isn't an admin.
+    const categories = NAV_CATEGORIES
+        .map((cat) => ({ ...cat, items: cat.items.filter((item) => !item.admin || isAdmin) }))
+        .filter((cat) => cat.items.length > 0);
+
+    // ── RAG backend health ──────────────────────────────────────────────────────
+    // Poll the tunnel health so the sidebar can disable the RAG link while the
+    // self-hosted backend is unreachable. Only relevant for admins (the only
+    // role that sees the RAG item). null = unknown (treated as enabled).
+    const [ragStatus, setRagStatus] = useState(null); // 'ok' | 'degraded' | 'offline' | 'unconfigured' | null
+    const ragDisabled = ragStatus === 'offline' || ragStatus === 'unconfigured';
+
+    useEffect(() => {
+        if (!isAdmin) return;
+        const POLL_MS = 60_000;
+        let timer = null;
+
+        const check = async () => {
+            try {
+                const res = await fetch('/admin/rag/health', { headers: { Accept: 'application/json' } });
+                if (res.ok) {
+                    const json = await res.json();
+                    setRagStatus(json.configured === false ? 'unconfigured' : (json.status || 'offline'));
+                } else {
+                    setRagStatus('offline');
+                }
+            } catch {
+                setRagStatus('offline');
+            }
+            timer = setTimeout(check, POLL_MS);
+        };
+
+        const onVisibility = () => {
+            if (document.visibilityState === 'visible') { clearTimeout(timer); check(); }
+            else { clearTimeout(timer); }
+        };
+
+        check();
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => {
+            clearTimeout(timer);
+            document.removeEventListener('visibilitychange', onVisibility);
+        };
+    }, [isAdmin]);
 
     const companyName    = company?.name || 'CIMS';
     const companyTagline = company?.tagline || '';
@@ -59,18 +150,45 @@ export default function AuthenticatedLayout({ children, title }) {
         .map((w) => w[0]?.toUpperCase() || '')
         .join('') || 'CI';
 
-    // Sidebar order — persisted in localStorage per role
+    // Sidebar item order — persisted in localStorage per role as one flat name
+    // list (backwards-compatible with the pre-category format) and applied
+    // within each category.
     const storageKey = `cims_nav_order_${auth?.user?.role || 'user'}`;
     const applyStoredOrder = (items) => {
         try {
             const saved = JSON.parse(localStorage.getItem(storageKey) || '[]');
-            if (!saved.length) return items;
-            const sorted = saved
-                .map((name) => items.find((i) => i.name === name))
-                .filter(Boolean);
-            items.forEach((item) => { if (!sorted.find((i) => i.name === item.name)) sorted.push(item); });
+            if (!Array.isArray(saved) || !saved.length) return items;
+            const seen = new Set();
+            const sorted = [];
+            // Honour the saved order, skipping unknown or duplicate names
+            saved.forEach((name) => {
+                if (seen.has(name)) return;
+                const item = items.find((i) => i.name === name);
+                if (item) { sorted.push(item); seen.add(name); }
+            });
+            // Append any items missing from the saved order (e.g. newly added menu items)
+            items.forEach((item) => {
+                if (!seen.has(item.name)) { sorted.push(item); seen.add(item.name); }
+            });
             return sorted;
         } catch { return items; }
+    };
+
+    // Category collapse state — persisted per role. The category containing the
+    // current page is always rendered open so the active item is never hidden.
+    const collapseKey = `cims_nav_collapsed_${auth?.user?.role || 'user'}`;
+    const [collapsedCats, setCollapsedCats] = useState(() => {
+        try {
+            const saved = JSON.parse(localStorage.getItem(collapseKey) || '[]');
+            return Array.isArray(saved) ? saved : [];
+        } catch { return []; }
+    });
+    const toggleCategory = (key) => {
+        setCollapsedCats((prev) => {
+            const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+            try { localStorage.setItem(collapseKey, JSON.stringify(next)); } catch { /* private mode */ }
+            return next;
+        });
     };
 
     const [installPrompt, setInstallPrompt] = useState(null);
@@ -98,12 +216,25 @@ export default function AuthenticatedLayout({ children, title }) {
     };
 
     const [sidebarOpen, setSidebarOpen] = useState(true);   // desktop: expanded vs collapsed
-    const [navOrder, setNavOrder] = useState(() => applyStoredOrder(navItems));
+    // Per-category item order: { [categoryKey]: item[] }
+    const [catOrder, setCatOrder] = useState(() =>
+        Object.fromEntries(categories.map((cat) => [cat.key, applyStoredOrder(cat.items)]))
+    );
     const [reordering, setReordering] = useState(false);
 
-    const handleReorder = (newOrder) => {
-        setNavOrder(newOrder);
-        localStorage.setItem(storageKey, JSON.stringify(newOrder.map((i) => i.name)));
+    const handleReorder = (catKey, newItems) => {
+        setCatOrder((prev) => {
+            const next = { ...prev, [catKey]: newItems };
+            try {
+                // Persist as one flat list (category order is fixed, item order per category)
+                const flat = categories.flatMap((cat) => next[cat.key] ?? cat.items).map((i) => i.name);
+                localStorage.setItem(storageKey, JSON.stringify(flat));
+            } catch {
+                // Storage unavailable (private mode / quota exceeded) — the new order
+                // still applies for this session, it just won't persist across reloads.
+            }
+            return next;
+        });
     };
 
     const toggleReorder = () => {
@@ -195,7 +326,7 @@ export default function AuthenticatedLayout({ children, title }) {
         try {
             await fetch(`/notifications/${notif.id}/read`, {
                 method: 'POST',
-                headers: { 'X-CSRF-TOKEN': csrfToken, Accept: 'application/json' },
+                headers: { ...csrfHeaders(), Accept: 'application/json' },
             });
         } catch {}
         setNotifications((prev) => prev.map((n) => n.id === notif.id ? { ...n, read_at: 'now' } : n));
@@ -208,7 +339,7 @@ export default function AuthenticatedLayout({ children, title }) {
         try {
             await fetch('/notifications/read-all', {
                 method: 'POST',
-                headers: { 'X-CSRF-TOKEN': csrfToken, Accept: 'application/json' },
+                headers: { ...csrfHeaders(), Accept: 'application/json' },
             });
         } catch {}
         setNotifications((prev) => prev.map((n) => ({ ...n, read_at: 'now' })));
@@ -267,60 +398,119 @@ export default function AuthenticatedLayout({ children, title }) {
                         </div>
                     </div>
 
-                    {/* Nav */}
-                    <nav className="flex-1 py-4 px-3 overflow-y-auto">
-                        {reordering ? (
-                            <Reorder.Group
-                                axis="y"
-                                values={navOrder}
-                                onReorder={handleReorder}
-                                className="space-y-1"
-                                style={{ listStyle: 'none', padding: 0, margin: 0 }}
-                            >
-                                {navOrder.map((item) => {
-                                    const isActive = currentPath.startsWith(item.href);
+                    {/* Nav — grouped into collapsible categories */}
+                    <nav className="flex-1 py-3 px-3 overflow-y-auto">
+                        {categories.map((cat, catIdx) => {
+                            const items = catOrder[cat.key] ?? cat.items;
+                            const hasActive = items.some((item) => currentPath.startsWith(item.href));
+                            // Collapse only applies when the header is visible (expanded
+                            // sidebar), never hides the active page, and is suspended
+                            // while reordering so every item stays draggable.
+                            const isCollapsed = sidebarOpen && !reordering && !hasActive
+                                && collapsedCats.includes(cat.key);
+
+                            const renderItem = (item) => {
+                                const isActive = currentPath.startsWith(item.href);
+                                const disabled = item.healthGated && ragDisabled;
+
+                                if (disabled) {
                                     return (
-                                        <Reorder.Item
+                                        <div
                                             key={item.name}
-                                            value={item}
-                                            style={{ listStyle: 'none' }}
-                                            whileDrag={{ scale: 1.03, opacity: 0.9, zIndex: 50 }}
-                                            className={cn(
-                                                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium cursor-grab active:cursor-grabbing select-none',
-                                                isActive
-                                                    ? 'bg-gold-500/10 text-gold-400 border border-gold-500/20'
-                                                    : 'text-navy-300 bg-navy-800/30 border border-white/5'
-                                            )}
-                                        >
-                                            <GripVertical className="w-4 h-4 shrink-0 text-navy-500" />
-                                            <item.icon className="w-5 h-5 shrink-0" />
-                                            <span className="whitespace-nowrap">{item.name}</span>
-                                        </Reorder.Item>
-                                    );
-                                })}
-                            </Reorder.Group>
-                        ) : (
-                            <div className="space-y-1">
-                                {navOrder.map((item) => {
-                                    const isActive = currentPath.startsWith(item.href);
-                                    return (
-                                        <Link
-                                            key={item.name}
-                                            href={item.href}
-                                            className={cn(
-                                                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150',
-                                                isActive
-                                                    ? 'bg-gold-500/10 text-gold-400 border border-gold-500/20'
-                                                    : 'text-navy-300 hover:text-white hover:bg-white/5'
-                                            )}
+                                            aria-disabled="true"
+                                            title={ragStatus === 'unconfigured' ? 'RAG backend not configured' : 'RAG backend is offline'}
+                                            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-navy-500 opacity-50 cursor-not-allowed select-none"
                                         >
                                             <item.icon className="w-5 h-5 shrink-0" />
                                             <span className="whitespace-nowrap">{item.name}</span>
-                                        </Link>
+                                            {sidebarOpen && (
+                                                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" title="Offline" />
+                                            )}
+                                        </div>
                                     );
-                                })}
-                            </div>
-                        )}
+                                }
+
+                                return (
+                                    <Link
+                                        key={item.name}
+                                        href={item.href}
+                                        className={cn(
+                                            'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150',
+                                            isActive
+                                                ? 'bg-gold-500/10 text-gold-400 border border-gold-500/20'
+                                                : 'text-navy-300 hover:text-white hover:bg-white/5'
+                                        )}
+                                    >
+                                        <item.icon className="w-5 h-5 shrink-0" />
+                                        <span className="whitespace-nowrap">{item.name}</span>
+                                    </Link>
+                                );
+                            };
+
+                            return (
+                                <div key={cat.key}>
+                                    {sidebarOpen ? (
+                                        <button
+                                            onClick={() => toggleCategory(cat.key)}
+                                            className={cn(
+                                                'w-full flex items-center justify-between px-3 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors',
+                                                hasActive ? 'text-gold-500/80' : 'text-navy-500 hover:text-navy-300'
+                                            )}
+                                        >
+                                            <span className="whitespace-nowrap">{cat.label}</span>
+                                            <ChevronDown className={cn(
+                                                'w-3.5 h-3.5 transition-transform duration-200',
+                                                isCollapsed && '-rotate-90'
+                                            )} />
+                                        </button>
+                                    ) : (
+                                        // Icon-only sidebar: headers become subtle dividers
+                                        catIdx > 0 && <div className="my-2 mx-2 border-t border-white/5" />
+                                    )}
+
+                                    {!isCollapsed && (reordering ? (
+                                        <Reorder.Group
+                                            axis="y"
+                                            values={items}
+                                            onReorder={(newItems) => handleReorder(cat.key, newItems)}
+                                            className="space-y-1"
+                                            style={{ listStyle: 'none', padding: 0, margin: 0 }}
+                                        >
+                                            {items.map((item) => {
+                                                const isActive = currentPath.startsWith(item.href);
+                                                const disabled = item.healthGated && ragDisabled;
+                                                return (
+                                                    <Reorder.Item
+                                                        key={item.name}
+                                                        value={item}
+                                                        style={{ listStyle: 'none' }}
+                                                        whileDrag={{ scale: 1.03, opacity: 0.9, zIndex: 50 }}
+                                                        className={cn(
+                                                            'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium cursor-grab active:cursor-grabbing select-none',
+                                                            isActive
+                                                                ? 'bg-gold-500/10 text-gold-400 border border-gold-500/20'
+                                                                : 'text-navy-300 bg-navy-800/30 border border-white/5',
+                                                            disabled && 'opacity-50'
+                                                        )}
+                                                    >
+                                                        <GripVertical className="w-4 h-4 shrink-0 text-navy-500" />
+                                                        <item.icon className="w-5 h-5 shrink-0" />
+                                                        <span className="whitespace-nowrap">{item.name}</span>
+                                                        {disabled && (
+                                                            <span className="ml-auto w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" title="Offline" />
+                                                        )}
+                                                    </Reorder.Item>
+                                                );
+                                            })}
+                                        </Reorder.Group>
+                                    ) : (
+                                        <div className="space-y-1">
+                                            {items.map(renderItem)}
+                                        </div>
+                                    ))}
+                                </div>
+                            );
+                        })}
                     </nav>
 
                     {/* Footer: install + reorder + collapse */}

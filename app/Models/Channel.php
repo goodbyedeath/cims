@@ -32,6 +32,7 @@ class Channel extends Model
         'district',
         'latitude',
         'longitude',
+        'map_url',
         'assigned_user_id',
         'status',
         'blacklist_reason',
@@ -60,7 +61,25 @@ class Channel extends Model
             'email_invalid'         => 'boolean',
             'email_unsubscribed'    => 'boolean',
             'email_unsubscribed_at' => 'datetime',
+            'last_blasted_at'       => 'datetime',
         ];
+    }
+
+    /**
+     * Channels eligible for a blast: never blasted, or last blasted before the
+     * cooldown window. $cooldownDays = 0 disables the filter (everyone eligible).
+     */
+    public function scopeBlastable(\Illuminate\Database\Eloquent\Builder $query, int $cooldownDays): \Illuminate\Database\Eloquent\Builder
+    {
+        if ($cooldownDays <= 0) {
+            return $query;
+        }
+
+        $cutoff = now()->subDays($cooldownDays);
+
+        return $query->where(fn ($q) => $q
+            ->whereNull('last_blasted_at')
+            ->orWhere('last_blasted_at', '<', $cutoff));
     }
 
     public function assignedUser(): BelongsTo

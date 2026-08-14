@@ -40,6 +40,7 @@ class ChannelRequest extends FormRequest
             'district' => ['nullable', 'string', 'max:255'],
             'latitude' => ['nullable', 'numeric', 'between:-90,90'],
             'longitude' => ['nullable', 'numeric', 'between:-180,180'],
+            'map_url' => ['nullable', 'string', 'max:4000'],
             'assigned_user_id' => ['nullable', 'exists:users,id'],
             'status'           => ['required', 'in:active,inactive,blacklist'],
             'blacklist_reason'  => ['nullable', 'string', 'required_if:status,blacklist'],

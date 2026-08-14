@@ -50,7 +50,49 @@
     </FilesMatch>
 </IfModule>
 
-# ── Compression ───────────────────────────────────────────────────────────────
+# ── Pre-compressed (Brotli / gzip) static assets ──────────────────────────────
+# Vite emits .br and .gz siblings next to the hashed JS/CSS at build time. When
+# the browser advertises support AND the sibling actually exists, serve it
+# directly — Brotli (which mod_deflate cannot produce) is preferred, gzip is the
+# fallback. The `-f` existence guard means these rules can only ever fire for a
+# real pre-built file, so a missing variant simply falls through to the original.
+<IfModule mod_rewrite.c>
+    RewriteCond %{HTTP:Accept-Encoding} br
+    RewriteCond %{REQUEST_FILENAME}\.br -f
+    RewriteRule ^(.+\.(?:js|css|svg|json|webmanifest))$ $1.br [L,E=no-gzip:1]
+
+    RewriteCond %{HTTP:Accept-Encoding} gzip
+    RewriteCond %{REQUEST_FILENAME}\.gz -f
+    RewriteRule ^(.+\.(?:js|css|svg|json|webmanifest))$ $1.gz [L,E=no-gzip:1]
+</IfModule>
+<IfModule mod_headers.c>
+    <FilesMatch "\.(?:js|css|svg|json|webmanifest)\.br$">
+        Header set Content-Encoding br
+        Header append Vary Accept-Encoding
+    </FilesMatch>
+    <FilesMatch "\.(?:js|css|svg|json|webmanifest)\.gz$">
+        Header set Content-Encoding gzip
+        Header append Vary Accept-Encoding
+    </FilesMatch>
+</IfModule>
+<IfModule mod_mime.c>
+    # Pre-compressed siblings must report their *original* content type so the
+    # browser parses them correctly (otherwise the .br/.gz extension wins).
+    <FilesMatch "\.js\.(?:br|gz)$">
+        ForceType application/javascript
+    </FilesMatch>
+    <FilesMatch "\.css\.(?:br|gz)$">
+        ForceType text/css
+    </FilesMatch>
+    <FilesMatch "\.svg\.(?:br|gz)$">
+        ForceType image/svg+xml
+    </FilesMatch>
+    <FilesMatch "\.(?:json|webmanifest)\.(?:br|gz)$">
+        ForceType application/json
+    </FilesMatch>
+</IfModule>
+
+# ── Compression (on-the-fly fallback for anything not pre-compressed) ──────────
 <IfModule mod_deflate.c>
     AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css
     AddOutputFilterByType DEFLATE application/javascript application/x-javascript
@@ -66,7 +108,7 @@
 # ── Long-term caching for Vite-hashed assets ──────────────────────────────────
 <IfModule mod_expires.c>
     ExpiresActive On
-    <FilesMatch "^.+-[A-Za-z0-9_-]{8}\.(js|css)$">
+    <FilesMatch "^.+-[A-Za-z0-9_-]{8}\.(js|css)(\.(br|gz))?$">
         ExpiresDefault "access plus 1 year"
     </FilesMatch>
     <FilesMatch "\.(ico|gif|jpe?g|png|svg|webp|woff2?|ttf|otf|eot)$">
@@ -76,8 +118,8 @@
 
 # ── Response headers ──────────────────────────────────────────────────────────
 <IfModule mod_headers.c>
-    # Immutable flag for hashed JS/CSS
-    <FilesMatch "^.+-[A-Za-z0-9_-]{8}\.(js|css)$">
+    # Immutable flag for hashed JS/CSS (and their pre-compressed .br/.gz siblings)
+    <FilesMatch "^.+-[A-Za-z0-9_-]{8}\.(js|css)(\.(br|gz))?$">
         Header set Cache-Control "public, max-age=31536000, immutable"
     </FilesMatch>
 
@@ -113,7 +155,10 @@
     # style-src: 'unsafe-inline' required for <style> tags injected by React components
     # font-src: fonts.bunny.net loaded by app.blade.php
     # img-src https: covers uploaded images served via /storage (same-origin) and any logo URLs
-    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.bunny.net; font-src 'self' data: https://fonts.bunny.net; img-src 'self' data: blob: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; manifest-src 'self'"
+    # connect-src: nominatim.openstreetmap.org for the channel form's address geocoding (lat/lng lookup)
+    # script-src 'wasm-unsafe-eval': lets the self-hosted Tesseract.js OCR engine compile its WebAssembly (/tesseract/*); same-origin only, narrower than 'unsafe-eval'
+    # frame-src *.wablas.com: WA Devices page embeds the Wablas pairing-QR page in a modal iframe ('self' included because the iframe starts at our /wa-devices/{id}/qr redirect)
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.bunny.net; font-src 'self' data: https://fonts.bunny.net; img-src 'self' data: blob: https:; connect-src 'self' https://fonts.bunny.net https://cloudflareinsights.com https://nominatim.openstreetmap.org; frame-src 'self' https://*.wablas.com https://wablas.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; manifest-src 'self'"
 
     # Permissions Policy — disable unused browser features
     Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"

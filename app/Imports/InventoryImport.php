@@ -96,7 +96,7 @@ class InventoryImport implements ToModel, WithHeadingRow, WithBatchInserts, With
             'kode_barang' => $this->cleanValue($row['kode_barang'] ?? $row['kodebarang'] ?? $row['kode barang'] ?? ''),
             'spesifikasi' => $this->cleanValue($row['spesifikasi'] ?? ''),
             'notes'       => $this->cleanValue($row['notes'] ?? ''),
-            'qty'         => $this->parseNullableInt($row['qty'] ?? null),
+            'qty'         => $this->sumQty($row),
             'srp'         => $srp,
             'm1'          => $m1,
         ];
@@ -150,6 +150,31 @@ class InventoryImport implements ToModel, WithHeadingRow, WithBatchInserts, With
     {
         // Prices in the sheet are shorthand (e.g. 150 = Rp 150.000)
         return (float) $this->cleanValue($value) * 1000;
+    }
+
+    /**
+     * qty is either a single "qty" column (legacy sheets) or stock split
+     * across several per-location columns headed qty_1 … qty_n — sum
+     * whatever is present. All columns blank/"infinite" still yields NULL,
+     * which the app treats as untracked/unlimited stock.
+     */
+    private function sumQty(array $row): ?int
+    {
+        $sum = null;
+
+        foreach ($row as $key => $value) {
+            $k = (string) $key;
+            if ($k !== 'qty' && !preg_match('/^qty_\w+$/', $k)) {
+                continue;
+            }
+
+            $v = $this->parseNullableInt($value);
+            if ($v !== null) {
+                $sum = ($sum ?? 0) + $v;
+            }
+        }
+
+        return $sum;
     }
 
     private function parseNullableInt(mixed $value): ?int

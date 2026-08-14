@@ -33,3 +33,12 @@ Thumbs.db
 # Bootstrap cache (generated; not source)
 /bootstrap/cache/*.php
 !/bootstrap/cache/.gitkeep
+
+# Dated .env backups (secrets) — never commit
+.env.backup*
+.env.*.bak
+# Build/backup tarballs & large OCR assets (deployed separately, not source)
+*.tar.gz
+/eng.traineddata
+/public/tesseract/
+/public/Test_image.jpeg

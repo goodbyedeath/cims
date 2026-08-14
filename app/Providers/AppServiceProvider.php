@@ -31,6 +31,15 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(5)->by($request->ip());
         });
 
+        // Public channel registration — OTP sends are the abusable action
+        // (each one fires a WhatsApp message), so keep them tight.
+        RateLimiter::for('catalog-otp', function (Request $request) {
+            return Limit::perMinute(3)->by($request->ip());
+        });
+        RateLimiter::for('catalog-register', function (Request $request) {
+            return Limit::perMinute(5)->by($request->ip());
+        });
+
         // Share company branding (logo, name) with the root Blade view so
         // favicon, PWA meta tags, and <title> update whenever settings change.
         View::composer('app', function ($view) {

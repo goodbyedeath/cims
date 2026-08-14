@@ -7,7 +7,7 @@ import Select from '@/Components/ui/Select';
 import Badge from '@/Components/ui/Badge';
 import Pagination from '@/Components/ui/Pagination';
 import { Table, Thead, Tbody, Tr, Th, ThSortable, Td } from '@/Components/ui/Table';
-import { formatNumber, gradeColor, statusColor } from '@/Lib/utils';
+import { formatNumber, gradeColor, statusColor, csrfHeaders } from '@/Lib/utils';
 import Modal from '@/Components/ui/Modal';
 import { Plus, Search, Eye, Edit, Trash2, Upload, AlertTriangle, RefreshCw, MapPin, CheckCircle2, Loader2, MailX, Mail, BellOff, BellRing } from 'lucide-react';
 import { useState, useRef } from 'react';
@@ -31,7 +31,7 @@ export default function Index({ channels, filters, provinces, hasGoogleSheet, no
         try {
             await fetch(`/channels/${ch.id}/toggle-email-invalid`, {
                 method: 'POST',
-                headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' },
+                headers: { ...csrfHeaders(), 'Accept': 'application/json' },
             });
         } catch {
             setEmailInvalidMap(prev => ({ ...prev, [ch.id]: cur }));
@@ -48,7 +48,7 @@ export default function Index({ channels, filters, provinces, hasGoogleSheet, no
         try {
             await fetch(`/channels/${ch.id}/toggle-unsubscribed`, {
                 method: 'POST',
-                headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' },
+                headers: { ...csrfHeaders(), 'Accept': 'application/json' },
             });
         } catch {
             setUnsubscribedMap(prev => ({ ...prev, [ch.id]: cur }));
@@ -79,7 +79,7 @@ export default function Index({ channels, filters, provinces, hasGoogleSheet, no
             try {
                 const res = await fetch('/channels-bulk-geocode', {
                     method: 'POST',
-                    headers: { 'X-CSRF-TOKEN': csrf, 'Accept': 'application/json' },
+                    headers: { ...csrfHeaders(), 'Accept': 'application/json' },
                 });
                 const data = await res.json();
 

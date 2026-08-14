@@ -27,6 +27,7 @@ export default function Form({ channel, users, suggestedCode }) {
         district: channel?.district || '',
         latitude: channel?.latitude || '',
         longitude: channel?.longitude || '',
+        map_url: channel?.map_url || '',
         assigned_user_id: channel?.assigned_user_id || '',
         status: channel?.status || 'active',
         blacklist_reason: channel?.blacklist_reason || '',
@@ -44,12 +45,21 @@ export default function Form({ channel, users, suggestedCode }) {
 
     const parseFullAddress = (text) => {
         const parts = text.split(',').map((s) => s.trim()).filter(Boolean);
-        if (parts.length < 2) return null;
+        // Tolerate common tails: a trailing "Indonesia" or a standalone postcode
+        // segment, and a postcode appended to the province ("DKI Jakarta 12190").
+        while (parts.length && (/^indonesia$/i.test(parts[parts.length - 1]) || /^\d{4,6}$/.test(parts[parts.length - 1]))) {
+            parts.pop();
+        }
+        if (parts.length) parts[parts.length - 1] = parts[parts.length - 1].replace(/\s+\d{4,6}$/, '').trim();
+        const clean = parts.filter(Boolean);
+        // Minimum is Alamat, Kota, Provinsi — Kecamatan (district) is optional.
+        if (clean.length < 3) return null;
 
-        const province = parts.length >= 4 ? parts[parts.length - 1] : '';
-        const city = parts[parts.length - (parts.length >= 4 ? 2 : 1)];
-        const district = parts.length >= 4 ? parts[parts.length - 3] : (parts.length === 3 ? parts[parts.length - 2] : '');
-        const address = parts.slice(0, parts.length >= 4 ? parts.length - 3 : parts.length - 2).join(', ') || parts[0];
+        const province = clean[clean.length - 1];
+        const city = clean[clean.length - 2];
+        const district = clean.length >= 4 ? clean[clean.length - 3] : '';
+        const addrEnd = clean.length >= 4 ? clean.length - 3 : clean.length - 2;
+        const address = clean.slice(0, addrEnd).join(', ') || clean[0];
 
         return { address, district, city, province };
     };
@@ -79,7 +89,7 @@ export default function Form({ channel, users, suggestedCode }) {
 
         const parsed = parseFullAddress(fullAddress);
         if (!parsed) {
-            setGeocodeError('Format: Alamat, Kecamatan, Kota, Provinsi');
+            setGeocodeError('Format: Alamat, Kota, Provinsi (Kecamatan opsional)');
             return;
         }
 
@@ -126,6 +136,39 @@ export default function Form({ channel, users, suggestedCode }) {
             setGeocodeError('Gagal mencari koordinat. Alamat tetap diisi.');
         } finally {
             setGeocoding(false);
+        }
+    };
+
+    const [mapUrlHint, setMapUrlHint] = useState('');
+
+    // Pull lat/lng out of a pasted Google Maps URL. Primary pattern is the
+    // camera position after "@"; fall back to the place pin (!3d…!4d…) and
+    // ?q=lat,lng style links, which shortened/shared URLs use instead.
+    const extractCoords = (url) => {
+        const patterns = [
+            /@(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/,
+            /!3d(-?\d{1,2}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/,
+            /[?&](?:q|query|ll)=(-?\d{1,2}(?:\.\d+)?)(?:,|%2C)(-?\d{1,3}(?:\.\d+)?)/,
+        ];
+        for (const re of patterns) {
+            const m = url.match(re);
+            if (!m) continue;
+            const lat = parseFloat(m[1]);
+            const lng = parseFloat(m[2]);
+            if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return { lat: m[1], lng: m[2] };
+        }
+        return null;
+    };
+
+    const handleMapUrlChange = (e) => {
+        const val = e.target.value;
+        const coords = val.trim() ? extractCoords(val) : null;
+        if (coords) {
+            setData((prev) => ({ ...prev, map_url: val, latitude: coords.lat, longitude: coords.lng }));
+            setMapUrlHint(`Koordinat terdeteksi: ${coords.lat}, ${coords.lng}`);
+        } else {
+            setData('map_url', val);
+            setMapUrlHint(val.trim() ? 'Koordinat tidak ditemukan di URL — isi manual di bawah.' : '');
         }
     };
 
@@ -225,7 +268,7 @@ export default function Form({ channel, users, suggestedCode }) {
                                 {geocoding ? 'Mencari...' : 'Auto-fill'}
                             </button>
                         </div>
-                        <p className="text-xs text-navy-500 mt-1">Format: Alamat, Kecamatan, Kota, Provinsi</p>
+                        <p className="text-xs text-navy-500 mt-1">Format: Alamat, Kota, Provinsi (Kecamatan opsional)</p>
                         {geocodeError && <p className="text-xs text-red-400 mt-1">{geocodeError}</p>}
                     </div>
 
@@ -244,6 +287,21 @@ export default function Form({ channel, users, suggestedCode }) {
                         <Input label="Province" value={data.province} onChange={(e) => setData('province', e.target.value)} error={errors.province} placeholder="Filled automatically" />
                         <Input label="City" value={data.city} onChange={(e) => setData('city', e.target.value)} error={errors.city} placeholder="Filled automatically" />
                         <Input label="District" value={data.district} onChange={(e) => setData('district', e.target.value)} error={errors.district} placeholder="Filled automatically" />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-navy-200 mb-1.5">URL Map (Google Maps)</label>
+                        <input
+                            type="text"
+                            value={data.map_url}
+                            onChange={handleMapUrlChange}
+                            placeholder="Tempel link Google Maps — koordinat terisi otomatis"
+                            className="w-full px-4 py-2.5 bg-navy-800/50 border border-white/10 rounded-lg text-white text-sm placeholder-navy-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30 focus:border-gold-500/50"
+                        />
+                        {mapUrlHint && (
+                            <p className={`text-xs mt-1 ${mapUrlHint.startsWith('Koordinat terdeteksi') ? 'text-emerald-400' : 'text-navy-500'}`}>{mapUrlHint}</p>
+                        )}
+                        {errors.map_url && <p className="text-xs text-red-400 mt-1">{errors.map_url}</p>}
                     </div>
 
                     <div>
